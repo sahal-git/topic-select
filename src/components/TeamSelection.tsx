@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { supabase, Topic, ItemWithData, Team } from '../lib/supabase';
-import { ChevronRight, CheckCircle, Users, Trophy, Clock, Shield, FolderOpen, ChevronDown, Check, Star, FileText, ArrowRight } from 'lucide-react';
+import { ChevronRight, CheckCircle, Users, Trophy, Shield, FolderOpen, ChevronDown, Check, Star, FileText, ArrowRight } from 'lucide-react';
 
 interface TeamSelectionProps {
   team: Team;
@@ -37,8 +37,8 @@ export default function TeamSelection({ team, onViewChange }: TeamSelectionProps
 
       const itemsToExpand = new Set<string>();
       itemsWithData.forEach(item => {
-        const teamHasCompleted = item.topics.some(t => t.selected_by_team === team);
-        if (!teamHasCompleted && item.topics.some(t => !t.selected_by_team)) {
+        const teamSelections = item.topics.filter(t => t.selected_by_team === team);
+        if (teamSelections.length < 2 && item.topics.some(t => !t.selected_by_team)) {
           itemsToExpand.add(item.id);
         }
       });
@@ -82,11 +82,17 @@ export default function TeamSelection({ team, onViewChange }: TeamSelectionProps
         .eq('id', topic.id)
         .is('selected_by_team', null);
 
-      if (error) throw error;
-
-      setShowConfirmationToast({ message: `Selected "${topic.title}"` });
-      setTimeout(() => setShowConfirmationToast(null), 3000);
-      fetchData();
+      if (error) {
+        if (error.code === 'PGRST116') {
+          console.log('Topic was already taken by another team.');
+        } else {
+          throw error;
+        }
+      } else {
+        setShowConfirmationToast({ message: `Selected "${topic.title}"` });
+        setTimeout(() => setShowConfirmationToast(null), 3000);
+        fetchData();
+      }
 
     } catch (error) {
       console.error('Error selecting topic:', error);
@@ -118,7 +124,7 @@ export default function TeamSelection({ team, onViewChange }: TeamSelectionProps
   const config = getTeamConfig(team);
   
   const completedCount = items.reduce((count, item) => {
-    return count + (item.topics.some(t => t.selected_by_team === team) ? 1 : 0);
+    return count + (item.topics.filter(t => t.selected_by_team === team).length >= 2 ? 1 : 0);
   }, 0);
 
   return (
@@ -131,10 +137,9 @@ export default function TeamSelection({ team, onViewChange }: TeamSelectionProps
               <h1 className="text-2xl font-bold">Team {team}</h1>
             </div>
             <p className="text-gray-600 mb-4">
-              Select one topic from each category below.
+              Select up to two topics from each category below.
             </p>
             
-            {/* Navigation Tabs */}
             <div className="flex gap-2 justify-center">
               <div className={`px-4 py-2 rounded-lg font-medium ${config.bgColor} text-white`}>
                 Topic Selection
@@ -168,7 +173,7 @@ export default function TeamSelection({ team, onViewChange }: TeamSelectionProps
                 <div className="flex items-center justify-between">
                   <div className={`font-medium ${config.textColor} flex items-center gap-2`}>
                     <Trophy className="h-5 w-5" />
-                    <span>Completed: {completedCount} / {items.length}</span>
+                    <span>Completed Categories: {completedCount} / {items.length}</span>
                   </div>
                 </div>
               </div>
@@ -183,8 +188,8 @@ export default function TeamSelection({ team, onViewChange }: TeamSelectionProps
                     </div>
                   ) : (
                     items.map((item) => {
-                      const teamSelection = item.topics.find(t => t.selected_by_team === team);
-                      const isItemCompleted = !!teamSelection;
+                      const teamSelections = item.topics.filter(t => t.selected_by_team === team);
+                      const isItemCompleted = teamSelections.length >= 2;
 
                       return (
                         <div key={item.id} className={`border rounded-lg overflow-hidden transition-all ${isItemCompleted ? 'bg-green-50 border-green-200' : 'bg-white'}`}>
@@ -201,7 +206,7 @@ export default function TeamSelection({ team, onViewChange }: TeamSelectionProps
                                 </div>
                               </div>
                               <div className={`text-sm font-medium px-3 py-1 rounded-full ${isItemCompleted ? 'bg-green-200 text-green-800' : 'bg-gray-200 text-gray-600'}`}>
-                                {isItemCompleted ? 'Completed' : 'Pending'}
+                                {isItemCompleted ? 'Completed' : `Selected ${teamSelections.length}/2`}
                               </div>
                             </div>
                           </button>
@@ -209,15 +214,33 @@ export default function TeamSelection({ team, onViewChange }: TeamSelectionProps
                           {expandedItems.has(item.id) && (
                             <div className="border-t bg-white p-4">
                               {isItemCompleted ? (
-                                <div className="p-4 rounded-lg bg-white border-2 border-dashed border-green-300 flex items-center gap-2">
-                                  <Star className="h-5 w-5 text-yellow-500 fill-current" />
-                                  <div>
-                                    <p className="text-sm text-green-800 font-medium">Your selection:</p>
-                                    <span className="text-lg font-bold text-green-900">{teamSelection!.title}</span>
+                                <div className="p-4 rounded-lg bg-white border-2 border-dashed border-green-300">
+                                  <p className="text-sm text-green-800 font-medium">Your selections:</p>
+                                  <div className="mt-2 space-y-2">
+                                    {teamSelections.map(selection => (
+                                      <div key={selection.id} className="flex items-center gap-2">
+                                        <Star className="h-5 w-5 text-yellow-500 fill-current" />
+                                        <span className="text-lg font-bold text-green-900">{selection.title}</span>
+                                      </div>
+                                    ))}
                                   </div>
                                 </div>
                               ) : (
                                 <div className="space-y-2">
+                                  {teamSelections.length > 0 && (
+                                    <div className="p-4 rounded-lg bg-white border-2 border-dashed border-green-300 mb-4">
+                                      <p className="text-sm text-green-800 font-medium">Your selection{teamSelections.length > 1 ? 's' : ''}:</p>
+                                      <div className="mt-2 space-y-2">
+                                        {teamSelections.map(selection => (
+                                          <div key={selection.id} className="flex items-center gap-2">
+                                            <Star className="h-5 w-5 text-yellow-500 fill-current" />
+                                            <span className="font-bold text-green-900">{selection.title}</span>
+                                          </div>
+                                        ))}
+                                      </div>
+                                    </div>
+                                  )}
+                                  <p className="text-sm font-medium text-gray-700">Select up to {2 - teamSelections.length} more:</p>
                                   {item.topics.map((topic) => (
                                     <button
                                       key={topic.id}
@@ -233,11 +256,11 @@ export default function TeamSelection({ team, onViewChange }: TeamSelectionProps
                                       {topic.selected_by_team ? (
                                         <span className="text-xs font-semibold text-red-600">Taken by Team {topic.selected_by_team}</span>
                                       ) : (
-                                        <span className="text-xs font-semibold text-green-600 flex items-center gap-1"><Check className="h-4 w-4" /> Available</span>
+                                        <span className="text-xs font-semibold text-green-600 flex items-center gap-1"><Check className="h-4 w-4" /> Select</span>
                                       )}
                                     </button>
                                   ))}
-                                  {item.topics.length === 0 && <p className="text-gray-500 text-sm">No topics available for this item yet.</p>}
+                                  {item.topics.filter(t => !t.selected_by_team).length === 0 && <p className="text-gray-500 text-sm">No more topics available for this item.</p>}
                                 </div>
                               )}
                             </div>
