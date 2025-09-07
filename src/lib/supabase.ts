@@ -1,9 +1,16 @@
 import { createClient } from '@supabase/supabase-js';
 
-const supabaseUrl = import.meta.env.VITE_SUPABASE_URL || '';
-const supabaseAnonKey = import.meta.env.VITE_SUPABASE_ANON_KEY || '';
+const supabaseUrl = import.meta.env.VITE_SUPABASE_URL;
+const supabaseAnonKey = import.meta.env.VITE_SUPABASE_ANON_KEY;
+
+if (!supabaseUrl || !supabaseAnonKey) {
+  throw new Error('VITE_SUPABASE_URL and VITE_SUPABASE_ANON_KEY are not set. Please check your .env file.');
+}
 
 export const supabase = createClient(supabaseUrl, supabaseAnonKey, {
+  db: {
+    schema: 'public',
+  },
   realtime: {
     params: {
       eventsPerSecond: 10,
@@ -11,12 +18,27 @@ export const supabase = createClient(supabaseUrl, supabaseAnonKey, {
   },
 });
 
+export type Item = {
+  id: string;
+  title: string;
+  description: string | null;
+  // The 'type' column still exists in the DB but is not used by the app now.
+  type: 'mcq' | 'submission'; 
+  created_at: string;
+  updated_at: string;
+};
+
 export type Topic = {
   id: string;
   title: string;
+  item_id: string;
   selected_by_team: string | null;
   created_at: string;
   updated_at: string;
+};
+
+export type ItemWithData = Item & {
+  topics: Topic[];
 };
 
 export type TeamCredentials = {

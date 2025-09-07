@@ -1,53 +1,97 @@
 import React, { useState, useEffect } from 'react';
-import { supabase, Topic, TeamCredentials, AppSettings, TEAMS } from '../lib/supabase';
-import { Plus, Trash2, RefreshCw, Users, CheckCircle, Circle, Key, Save, Shield, Edit, Trophy, BarChart3, LogOut, Eye, EyeOff, Power, PowerOff } from 'lucide-react';
+import { supabase, Topic, ItemWithData, TeamCredentials, TEAMS } from '../lib/supabase';
+import { Plus, Trash2, RefreshCw, Users, CheckCircle, Circle, Key, Save, Shield, Edit, Trophy, BarChart3, LogOut, Eye, EyeOff, Power, PowerOff, FolderOpen, ChevronDown, ChevronRight, ListChecks } from 'lucide-react';
 
 interface AdminPanelProps {}
 
 export default function AdminPanel({}: AdminPanelProps) {
-  const [topics, setTopics] = useState<Topic[]>([]);
+  const [items, setItems] = useState<ItemWithData[]>([]);
   const [teamCredentials, setTeamCredentials] = useState<TeamCredentials[]>([]);
   const [isAppLive, setIsAppLive] = useState(false);
-  const [newTopic, setNewTopic] = useState('');
+  
+  const [newItemTitle, setNewItemTitle] = useState('');
+  const [newTopicTitle, setNewTopicTitle] = useState('');
+  const [selectedItemIdForTopic, setSelectedItemIdForTopic] = useState('');
+
   const [isLoading, setIsLoading] = useState(false);
   const [isUpdatingLiveStatus, setIsUpdatingLiveStatus] = useState(false);
   const [editingCredentials, setEditingCredentials] = useState<{[key: string]: {username: string, password: string}}>({});
   const [showPasswords, setShowPasswords] = useState<{[key: string]: boolean}>({});
-  const [activeTab, setActiveTab] = useState<'overview' | 'topics' | 'credentials'>('overview');
+  const [activeTab, setActiveTab] = useState<'overview' | 'items' | 'credentials'>('overview');
+  const [expandedItems, setExpandedItems] = useState<Set<string>>(new Set());
+
+  const fetchData = async () => {
+    try {
+      const { data: itemsData, error: itemsError } = await supabase
+        .from('items')
+        .select('*')
+        .order('created_at', { ascending: true });
+      if (itemsError) throw itemsError;
+
+      const { data: topicsData, error: topicsError } = await supabase
+        .from('topics')
+        .select('*')
+        .order('created_at', { ascending: true });
+      if (topicsError) throw topicsError;
+
+      const itemsWithData = (itemsData || []).map(item => ({
+        ...item,
+        topics: (topicsData || []).filter(topic => topic.item_id === item.id),
+      }));
+
+      setItems(itemsWithData);
+
+      const itemsWithTopicsIds = new Set(
+        itemsWithData.filter(item => item.topics.length > 0).map(item => item.id)
+      );
+      setExpandedItems(prev => new Set([...prev, ...itemsWithTopicsIds]));
+
+      if (itemsWithData.length > 0 && !selectedItemIdForTopic) {
+        setSelectedItemIdForTopic(itemsWithData[0].id);
+      }
+    } catch (error) {
+      console.error('Error fetching data:', error);
+    }
+  };
+
+  const fetchTeamCredentials = async () => {
+    try {
+      const { data, error } = await supabase.from('team_credentials').select('*');
+      if (error) throw error;
+      setTeamCredentials(data || []);
+    } catch (error) {
+      console.error('Error fetching team credentials:', error);
+    }
+  };
+  
+  const fetchAppLiveStatus = async () => {
+    try {
+      const { data, error } = await supabase
+        .from('app_settings')
+        .select('value')
+        .eq('key', 'app_live')
+        .single();
+      if (error) throw error;
+      setIsAppLive(data?.value === 'true');
+    } catch (error) {
+      console.error('Error fetching app live status:', error);
+    }
+  };
 
   useEffect(() => {
-    fetchTopics();
+    fetchData();
     fetchTeamCredentials();
     fetchAppLiveStatus();
 
     const refreshInterval = setInterval(() => {
-      fetchTopics();
+      fetchData();
       fetchTeamCredentials();
       fetchAppLiveStatus();
-    }, 1000);
+    }, 2000);
     
     const channel = supabase
-      .channel('topics-admin')
-      .on('postgres_changes', 
-        { event: 'INSERT', schema: 'public', table: 'topics' },
-        (payload) => {
-          setTopics(prev => [...prev, payload.new as Topic]);
-        }
-      )
-      .on('postgres_changes', 
-        { event: 'UPDATE', schema: 'public', table: 'topics' },
-        (payload) => {
-          setTopics(prev => prev.map(topic => 
-            topic.id === payload.new.id ? payload.new as Topic : topic
-          ));
-        }
-      )
-      .on('postgres_changes', 
-        { event: 'DELETE', schema: 'public', table: 'topics' },
-        (payload) => {
-          setTopics(prev => prev.filter(topic => topic.id !== payload.old.id));
-        }
-      )
+      .channel('admin-realtime')
+      .on('postgres_changes', { event: '*', schema: 'public' }, fetchData)
       .subscribe();
 
     return () => {
@@ -56,126 +100,104 @@ export default function AdminPanel({}: AdminPanelProps) {
     };
   }, []);
 
-  const fetchTopics = async () => {
-    try {
-      const { data, error } = await supabase
-        .from('topics')
-        .select('*')
-        .order('created_at', { ascending: true });
-
-      if (error) throw error;
-      setTopics(data || []);
-    } catch (error) {
-      console.error('Error fetching topics:', error);
-    }
-  };
-
-  const fetchTeamCredentials = async () => {
-    try {
-      const { data, error } = await supabase
-        .from('team_credentials')
-        .select('*')
-        .order('team_name', { ascending: true });
-
-      if (error) throw error;
-      setTeamCredentials(data || []);
-    } catch (error) {
-      console.error('Error fetching team credentials:', error);
-    }
-  };
-
-  const fetchAppLiveStatus = async () => {
-    try {
-      const { data, error } = await supabase
-        .from('app_settings')
-        .select('value')
-        .eq('key', 'app_live')
-        .single();
-
-      if (error) throw error;
-      setIsAppLive(data?.value === 'true');
-    } catch (error) {
-      console.error('Error fetching app live status:', error);
-    }
-  };
-
   const toggleAppLiveStatus = async () => {
     setIsUpdatingLiveStatus(true);
     try {
-      const newStatus = !isAppLive;
       const { error } = await supabase
         .from('app_settings')
-        .update({ value: newStatus.toString() })
+        .update({ value: !isAppLive ? 'true' : 'false' })
         .eq('key', 'app_live');
-
       if (error) throw error;
-      setIsAppLive(newStatus);
+      setIsAppLive(!isAppLive);
     } catch (error) {
-      console.error('Error updating app live status:', error);
+      console.error('Error toggling app status:', error);
     } finally {
       setIsUpdatingLiveStatus(false);
     }
   };
 
-  const addTopic = async (e: React.FormEvent) => {
+  const addItem = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!newTopic.trim()) return;
+    if (!newItemTitle.trim()) return;
 
     setIsLoading(true);
     try {
       const { error } = await supabase
-        .from('topics')
-        .insert([{ title: newTopic.trim() }]);
+        .from('items')
+        .insert([{ title: newItemTitle.trim() }]);
 
       if (error) throw error;
-      setNewTopic('');
+      setNewItemTitle('');
     } catch (error) {
-      console.error('Error adding topic:', error);
-      fetchTopics();
+      console.error('Error adding item:', error);
     } finally {
       setIsLoading(false);
     }
   };
 
-  const deleteTopic = async (id: string) => {
+  const addTopic = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!newTopicTitle.trim() || !selectedItemIdForTopic) return;
+
+    setIsLoading(true);
     try {
       const { error } = await supabase
         .from('topics')
-        .delete()
-        .eq('id', id);
+        .insert([{ 
+          title: newTopicTitle.trim(),
+          item_id: selectedItemIdForTopic
+        }]);
 
       if (error) throw error;
+      setNewTopicTitle('');
     } catch (error) {
-      console.error('Error deleting topic:', error);
-      fetchTopics();
+      console.error('Error adding topic:', error);
+    } finally {
+      setIsLoading(false);
+    }
+  };
+  
+  const deleteItem = async (id: string) => {
+    if (window.confirm('Are you sure you want to delete this item and all its topics?')) {
+      try {
+        const { error } = await supabase.from('items').delete().eq('id', id);
+        if (error) throw error;
+      } catch (error) {
+        console.error('Error deleting item:', error);
+      }
     }
   };
 
-  const resetSelection = async (id: string) => {
-    try {
-      const { error } = await supabase
-        .from('topics')
-        .update({ selected_by_team: null })
-        .eq('id', id);
+  const deleteTopic = async (id: string) => {
+    if (window.confirm('Are you sure you want to delete this topic?')) {
+      try {
+        const { error } = await supabase.from('topics').delete().eq('id', id);
+        if (error) throw error;
+      } catch (error) {
+        console.error('Error deleting topic:', error);
+      }
+    }
+  };
 
-      if (error) throw error;
-    } catch (error) {
-      console.error('Error resetting selection:', error);
-      fetchTopics();
+  const resetTopicSelection = async (id: string) => {
+    if (window.confirm('Are you sure you want to reset this selection?')) {
+      try {
+        const { error } = await supabase.from('topics').update({ selected_by_team: null }).eq('id', id);
+        if (error) throw error;
+      } catch (error) {
+        console.error('Error resetting selection:', error);
+      }
     }
   };
 
   const resetAllSelections = async () => {
-    try {
-      const { error } = await supabase
-        .from('topics')
-        .update({ selected_by_team: null })
-        .neq('selected_by_team', null);
-
-      if (error) throw error;
-    } catch (error) {
-      console.error('Error resetting all selections:', error);
-      fetchTopics();
+    if (window.confirm('Are you sure you want to reset ALL topic selections? This cannot be undone.')) {
+      try {
+        const { error } = await supabase.from('topics').update({ selected_by_team: null }).neq('selected_by_team', 'null');
+        if (error) throw error;
+      } catch (error) {
+        console.error('Error resetting all selections:', error);
+      }
     }
   };
 
@@ -185,60 +207,55 @@ export default function AdminPanel({}: AdminPanelProps) {
         .from('team_credentials')
         .update({ username, password })
         .eq('team_name', teamName);
-
       if (error) throw error;
-      
-      setEditingCredentials(prev => {
-        const newState = { ...prev };
-        delete newState[teamName];
-        return newState;
-      });
-      
-      fetchTeamCredentials();
+      cancelEditingCredentials(teamName);
     } catch (error) {
-      console.error('Error updating team credentials:', error);
+      console.error('Error updating credentials:', error);
     }
   };
 
   const startEditingCredentials = (teamName: string, currentUsername: string, currentPassword: string) => {
-    setEditingCredentials(prev => ({
-      ...prev,
-      [teamName]: { username: currentUsername, password: currentPassword }
-    }));
+    setEditingCredentials(prev => ({...prev, [teamName]: {username: currentUsername, password: currentPassword}}));
   };
 
   const cancelEditingCredentials = (teamName: string) => {
     setEditingCredentials(prev => {
-      const newState = { ...prev };
+      const newState = {...prev};
       delete newState[teamName];
       return newState;
     });
   };
 
   const handleSignOut = async () => {
-    try {
-      const { error } = await supabase.auth.signOut();
-      if (error) throw error;
-    } catch (error) {
-      console.error('Error signing out:', error);
-    }
+    await supabase.auth.signOut();
+  };
+
+  const toggleItemExpansion = (itemId: string) => {
+    setExpandedItems(prev => {
+      const newSet = new Set(prev);
+      if (newSet.has(itemId)) {
+        newSet.delete(itemId);
+      } else {
+        newSet.add(itemId);
+      }
+      return newSet;
+    });
   };
 
   const getTeamColor = (team: string) => {
     switch (team) {
-      case 'Almaria': return 'text-blue-600 bg-blue-50';
-      case 'Tolido': return 'text-green-600 bg-green-50';
-      case 'Zaragoza': return 'text-purple-600 bg-purple-50';
-      default: return 'text-gray-600 bg-gray-50';
+      case 'Almaria': return 'bg-blue-100 text-blue-800';
+      case 'Tolido': return 'bg-green-100 text-green-800';
+      case 'Zaragoza': return 'bg-purple-100 text-purple-800';
+      default: return 'bg-gray-100 text-gray-800';
     }
   };
 
-  const availableTopics = topics.filter(topic => !topic.selected_by_team);
-  const selectedTopics = topics.filter(topic => topic.selected_by_team);
+  const allTopics = items.flatMap(item => item.topics);
+  const selectedTopics = allTopics.filter(topic => topic.selected_by_team);
 
   return (
     <div className="min-h-screen bg-gray-50">
-      {/* Compact Header */}
       <div className="bg-white border-b sticky top-16 z-40">
         <div className="max-w-6xl mx-auto px-4 py-4">
           <div className="flex items-center justify-between mb-4">
@@ -256,12 +273,10 @@ export default function AdminPanel({}: AdminPanelProps) {
               <span className="hidden sm:inline">Sign Out</span>
             </button>
           </div>
-
-          {/* Mobile-friendly tabs */}
           <div className="flex space-x-1 bg-gray-100 p-1 rounded-lg">
             {[
               { id: 'overview', label: 'Overview', icon: BarChart3 },
-              { id: 'topics', label: 'Topics', icon: Trophy },
+              { id: 'items', label: 'Items & Topics', icon: FolderOpen },
               { id: 'credentials', label: 'Teams', icon: Key }
             ].map(({ id, label, icon: Icon }) => (
               <button
@@ -284,7 +299,6 @@ export default function AdminPanel({}: AdminPanelProps) {
       <div className="max-w-6xl mx-auto px-4 py-6">
         {activeTab === 'overview' && (
           <div className="space-y-6">
-            {/* Compact Stats */}
             <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
               <div className="bg-white rounded-lg shadow-sm border p-4 text-center">
                 <div className={`text-2xl font-bold mb-1 ${isAppLive ? 'text-green-600' : 'text-red-600'}`}>
@@ -293,20 +307,18 @@ export default function AdminPanel({}: AdminPanelProps) {
                 <div className="text-xs text-gray-600 uppercase tracking-wide">App Status</div>
               </div>
               <div className="bg-white rounded-lg shadow-sm border p-4 text-center">
-                <div className="text-2xl font-bold text-blue-600 mb-1">{topics.length}</div>
-                <div className="text-xs text-gray-600 uppercase tracking-wide">Total Topics</div>
+                <div className="text-2xl font-bold text-indigo-600 mb-1">{items.length}</div>
+                <div className="text-xs text-gray-600 uppercase tracking-wide">Items</div>
+              </div>
+              <div className="bg-white rounded-lg shadow-sm border p-4 text-center">
+                <div className="text-2xl font-bold text-blue-600 mb-1">{allTopics.length}</div>
+                <div className="text-xs text-gray-600 uppercase tracking-wide">Topics</div>
               </div>
               <div className="bg-white rounded-lg shadow-sm border p-4 text-center">
                 <div className="text-2xl font-bold text-green-600 mb-1">{selectedTopics.length}</div>
                 <div className="text-xs text-gray-600 uppercase tracking-wide">Selected</div>
               </div>
-              <div className="bg-white rounded-lg shadow-sm border p-4 text-center">
-                <div className="text-2xl font-bold text-orange-600 mb-1">{availableTopics.length}</div>
-                <div className="text-xs text-gray-600 uppercase tracking-wide">Available</div>
-              </div>
             </div>
-
-            {/* App Control & Quick Actions */}
             <div className="bg-white rounded-lg shadow-sm border p-4">
               <h3 className="font-semibold text-gray-900 mb-3">App Control & Quick Actions</h3>
               <div className="flex flex-wrap gap-3">
@@ -339,8 +351,6 @@ export default function AdminPanel({}: AdminPanelProps) {
                 </div>
               </div>
             </div>
-
-            {/* Recent Activity */}
             <div className="bg-white rounded-lg shadow-sm border">
               <div className="p-4 border-b">
                 <h3 className="font-semibold text-gray-900">Recent Selections</h3>
@@ -350,17 +360,22 @@ export default function AdminPanel({}: AdminPanelProps) {
                   <p className="text-gray-500 text-center py-4">No selections yet</p>
                 ) : (
                   <div className="space-y-3">
-                    {selectedTopics.slice(0, 5).map((topic) => (
-                      <div key={topic.id} className="flex items-center justify-between p-3 bg-gray-50 rounded-lg">
-                        <div className="flex-1">
-                          <div className="font-medium text-gray-900 text-sm">{topic.title}</div>
-                          <div className="text-xs text-gray-500">Selected by Team {topic.selected_by_team}</div>
+                    {selectedTopics.slice(0, 5).map((topic) => {
+                      const item = items.find(item => item.id === topic.item_id);
+                      return (
+                        <div key={topic.id} className="flex items-center justify-between p-3 bg-gray-50 rounded-lg">
+                          <div className="flex-1">
+                            <div className="font-medium text-gray-900 text-sm">{topic.title}</div>
+                            <div className="text-xs text-gray-500">
+                              {item?.title} • Selected by Team {topic.selected_by_team}
+                            </div>
+                          </div>
+                          <div className={`px-2 py-1 rounded text-xs font-medium ${getTeamColor(topic.selected_by_team!)}`}>
+                            {topic.selected_by_team}
+                          </div>
                         </div>
-                        <div className={`px-2 py-1 rounded text-xs font-medium ${getTeamColor(topic.selected_by_team!)}`}>
-                          {topic.selected_by_team}
-                        </div>
-                      </div>
-                    ))}
+                      );
+                    })}
                   </div>
                 )}
               </div>
@@ -368,85 +383,136 @@ export default function AdminPanel({}: AdminPanelProps) {
           </div>
         )}
 
-        {activeTab === 'topics' && (
+        {activeTab === 'items' && (
           <div className="space-y-6">
-            {/* Add Topic Form */}
             <div className="bg-white rounded-lg shadow-sm border p-4">
-              <h3 className="font-semibold text-gray-900 mb-3">Add New Topic</h3>
-              <form onSubmit={addTopic} className="flex gap-3">
+              <h3 className="font-semibold text-gray-900 mb-3">Add New Item (Category)</h3>
+              <form onSubmit={addItem} className="flex items-center gap-3">
                 <input
                   type="text"
-                  value={newTopic}
-                  onChange={(e) => setNewTopic(e.target.value)}
-                  placeholder="Enter topic title..."
-                  className="flex-1 px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-transparent outline-none"
+                  value={newItemTitle}
+                  onChange={(e) => setNewItemTitle(e.target.value)}
+                  placeholder="New item title..."
+                  className="flex-grow px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-transparent outline-none"
                   disabled={isLoading}
                 />
                 <button
                   type="submit"
-                  disabled={isLoading || !newTopic.trim()}
-                  className="px-4 py-2 bg-primary-600 hover:bg-primary-700 text-white rounded-lg font-medium flex items-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed"
+                  disabled={isLoading || !newItemTitle.trim()}
+                  className="px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg font-medium flex items-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed"
                 >
                   <Plus className="h-4 w-4" />
-                  <span className="hidden sm:inline">Add</span>
+                  Add Item
                 </button>
               </form>
             </div>
-
-            {/* Topics List */}
+            <div className="bg-white rounded-lg shadow-sm border p-4">
+              <h3 className="font-semibold text-gray-900 mb-3">Add New Topic</h3>
+              <form onSubmit={addTopic} className="space-y-3">
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                  <select
+                    value={selectedItemIdForTopic}
+                    onChange={(e) => setSelectedItemIdForTopic(e.target.value)}
+                    className="px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-transparent outline-none"
+                    disabled={isLoading}
+                  >
+                    <option value="">Select an item...</option>
+                    {items.map((item) => (
+                      <option key={item.id} value={item.id}>
+                        {item.title}
+                      </option>
+                    ))}
+                  </select>
+                  <input
+                    type="text"
+                    value={newTopicTitle}
+                    onChange={(e) => setNewTopicTitle(e.target.value)}
+                    placeholder="Topic title..."
+                    className="px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-transparent outline-none"
+                    disabled={isLoading}
+                  />
+                </div>
+                <button
+                  type="submit"
+                  disabled={isLoading || !newTopicTitle.trim() || !selectedItemIdForTopic}
+                  className="px-4 py-2 bg-primary-600 hover:bg-primary-700 text-white rounded-lg font-medium flex items-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed"
+                >
+                  <Plus className="h-4 w-4" />
+                  Add Topic
+                </button>
+              </form>
+            </div>
             <div className="bg-white rounded-lg shadow-sm border">
               <div className="p-4 border-b">
-                <h3 className="font-semibold text-gray-900">All Topics ({topics.length})</h3>
+                <h3 className="font-semibold text-gray-900">All Items & Topics</h3>
               </div>
               <div className="p-4">
-                {topics.length === 0 ? (
+                {items.length === 0 ? (
                   <div className="text-center py-8">
-                    <Trophy className="h-12 w-12 text-gray-400 mx-auto mb-3" />
-                    <p className="text-gray-500">No topics added yet</p>
+                    <FolderOpen className="h-12 w-12 text-gray-400 mx-auto mb-3" />
+                    <p className="text-gray-500">No items added yet</p>
                   </div>
                 ) : (
-                  <div className="space-y-3">
-                    {topics.map((topic, index) => (
-                      <div
-                        key={topic.id}
-                        className="flex items-center justify-between p-3 border border-gray-200 rounded-lg hover:bg-gray-50 transition-colors"
-                      >
-                        <div className="flex items-center gap-3 flex-1">
-                          <div className="bg-gray-100 text-gray-600 font-bold text-sm w-8 h-8 rounded flex items-center justify-center">
-                            {index + 1}
-                          </div>
-                          {topic.selected_by_team ? (
-                            <CheckCircle className="h-5 w-5 text-green-600" />
-                          ) : (
-                            <Circle className="h-5 w-5 text-gray-400" />
-                          )}
-                          <div className="flex-1">
-                            <div className="font-medium text-gray-900 text-sm">{topic.title}</div>
-                            {topic.selected_by_team && (
-                              <div className={`inline-block px-2 py-1 rounded text-xs font-medium mt-1 ${getTeamColor(topic.selected_by_team)}`}>
-                                Team {topic.selected_by_team}
-                              </div>
-                            )}
-                          </div>
-                        </div>
-                        <div className="flex items-center gap-1">
-                          {topic.selected_by_team && (
-                            <button
-                              onClick={() => resetSelection(topic.id)}
-                              className="p-2 text-orange-600 hover:bg-orange-50 rounded transition-colors"
-                              title="Reset selection"
-                            >
-                              <RefreshCw className="h-4 w-4" />
-                            </button>
-                          )}
+                  <div className="space-y-4">
+                    {items.map((item) => (
+                      <div key={item.id} className="border border-gray-200 rounded-lg">
+                        <div className="p-4 bg-gray-50 flex items-center justify-between">
                           <button
-                            onClick={() => deleteTopic(topic.id)}
+                            onClick={() => toggleItemExpansion(item.id)}
+                            className="flex items-center gap-3 flex-1 text-left"
+                          >
+                            {expandedItems.has(item.id) ? (
+                              <ChevronDown className="h-5 w-5 text-gray-400" />
+                            ) : (
+                              <ChevronRight className="h-5 w-5 text-gray-400" />
+                            )}
+                            <ListChecks className="h-5 w-5 text-blue-600" />
+                            <div>
+                              <div className="font-medium text-gray-900">{item.title}</div>
+                              <div className="text-xs text-gray-400 mt-1">
+                                {item.topics.length} topics
+                              </div>
+                            </div>
+                          </button>
+                          <button
+                            onClick={() => deleteItem(item.id)}
                             className="p-2 text-red-600 hover:bg-red-50 rounded transition-colors"
-                            title="Delete topic"
+                            title="Delete item"
                           >
                             <Trash2 className="h-4 w-4" />
                           </button>
                         </div>
+
+                        {expandedItems.has(item.id) && (
+                          <div className="p-4 border-t border-gray-200">
+                            {item.topics.length === 0 ? (
+                              <p className="text-gray-500 text-sm">No topics in this item</p>
+                            ) : (
+                              <div className="space-y-2">
+                                {item.topics.map((topic) => (
+                                  <div key={topic.id} className="flex items-center justify-between p-3 border border-gray-200 rounded-lg hover:bg-gray-50 transition-colors">
+                                    <div>
+                                      <p className="font-medium text-gray-800">{topic.title}</p>
+                                      {topic.selected_by_team ? (
+                                        <div className={`text-xs font-medium px-2 py-0.5 rounded-full inline-block mt-1 ${getTeamColor(topic.selected_by_team)}`}>
+                                          Selected by Team {topic.selected_by_team}
+                                        </div>
+                                      ) : (
+                                        <p className="text-xs text-green-600">Available</p>
+                                      )}
+                                    </div>
+                                    <div className="flex items-center gap-2">
+                                      {topic.selected_by_team && (
+                                        <button onClick={() => resetTopicSelection(topic.id)} className="p-2 text-orange-600 hover:bg-orange-50 rounded"><RefreshCw className="h-4 w-4" /></button>
+                                      )}
+                                      <button onClick={() => deleteTopic(topic.id)} className="p-2 text-red-600 hover:bg-red-50 rounded"><Trash2 className="h-4 w-4" /></button>
+                                    </div>
+                                  </div>
+                                ))}
+                              </div>
+                            )}
+                          </div>
+                        )}
                       </div>
                     ))}
                   </div>
@@ -458,107 +524,43 @@ export default function AdminPanel({}: AdminPanelProps) {
 
         {activeTab === 'credentials' && (
           <div className="space-y-6">
-            <div className="bg-white rounded-lg shadow-sm border">
-              <div className="p-4 border-b">
-                <h3 className="font-semibold text-gray-900">Team Login Credentials</h3>
-                <p className="text-sm text-gray-600 mt-1">Set username and password for each team</p>
-              </div>
-              <div className="p-4 space-y-4">
+            <div className="bg-white rounded-lg shadow-sm border p-4">
+              <h3 className="font-semibold text-gray-900 mb-3">Team Credentials</h3>
+              <div className="space-y-4">
                 {teamCredentials.map((cred) => (
-                  <div key={cred.team_name} className="border border-gray-200 rounded-lg p-4">
-                    <div className="flex items-center justify-between mb-3">
-                      <h4 className="font-medium text-gray-900">Team {cred.team_name}</h4>
-                      {!editingCredentials[cred.team_name] && (
-                        <button
-                          onClick={() => startEditingCredentials(cred.team_name, cred.username, cred.password)}
-                          className="text-primary-600 hover:text-primary-700 font-medium flex items-center gap-1 px-3 py-1 rounded hover:bg-primary-50 transition-colors text-sm"
-                        >
-                          <Edit className="h-4 w-4" />
-                          Edit
-                        </button>
-                      )}
-                    </div>
-                    
+                  <div key={cred.id} className="p-4 border rounded-lg">
+                    <h4 className="font-medium text-lg mb-2">Team {cred.team_name}</h4>
                     {editingCredentials[cred.team_name] ? (
                       <div className="space-y-3">
-                        <div>
-                          <label className="block text-sm font-medium text-gray-700 mb-1">Username</label>
-                          <input
-                            type="text"
-                            value={editingCredentials[cred.team_name].username}
-                            onChange={(e) => setEditingCredentials(prev => ({
-                              ...prev,
-                              [cred.team_name]: { ...prev[cred.team_name], username: e.target.value }
-                            }))}
-                            className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-transparent outline-none"
-                            placeholder="Enter username"
-                          />
-                        </div>
-                        <div>
-                          <label className="block text-sm font-medium text-gray-700 mb-1">Password</label>
-                          <input
-                            type="text"
-                            value={editingCredentials[cred.team_name].password}
-                            onChange={(e) => setEditingCredentials(prev => ({
-                              ...prev,
-                              [cred.team_name]: { ...prev[cred.team_name], password: e.target.value }
-                            }))}
-                            className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-transparent outline-none"
-                            placeholder="Enter password"
-                          />
-                        </div>
+                        <input
+                          type="text"
+                          value={editingCredentials[cred.team_name].username}
+                          onChange={(e) => setEditingCredentials(prev => ({...prev, [cred.team_name]: {...prev[cred.team_name], username: e.target.value}}))}
+                          placeholder="Username"
+                          className="w-full px-3 py-2 border rounded-lg"
+                        />
+                        <input
+                          type="text"
+                          value={editingCredentials[cred.team_name].password}
+                          onChange={(e) => setEditingCredentials(prev => ({...prev, [cred.team_name]: {...prev[cred.team_name], password: e.target.value}}))}
+                          placeholder="Password"
+                          className="w-full px-3 py-2 border rounded-lg"
+                        />
                         <div className="flex gap-2">
-                          <button
-                            onClick={() => updateTeamCredentials(
-                              cred.team_name,
-                              editingCredentials[cred.team_name].username,
-                              editingCredentials[cred.team_name].password
-                            )}
-                            className="px-4 py-2 bg-primary-600 hover:bg-primary-700 text-white rounded-lg font-medium flex items-center gap-2 text-sm"
-                          >
-                            <Save className="h-4 w-4" />
-                            Save
-                          </button>
-                          <button
-                            onClick={() => cancelEditingCredentials(cred.team_name)}
-                            className="px-4 py-2 bg-gray-100 hover:bg-gray-200 text-gray-700 rounded-lg font-medium text-sm"
-                          >
-                            Cancel
-                          </button>
+                          <button onClick={() => updateTeamCredentials(cred.team_name, editingCredentials[cred.team_name].username, editingCredentials[cred.team_name].password)} className="px-3 py-1 bg-green-600 text-white rounded">Save</button>
+                          <button onClick={() => cancelEditingCredentials(cred.team_name)} className="px-3 py-1 bg-gray-200 rounded">Cancel</button>
                         </div>
                       </div>
                     ) : (
-                      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                        <div>
-                          <span className="text-gray-600 font-medium text-sm">Username:</span>
-                          <div className="mt-1 font-mono bg-gray-50 px-3 py-2 rounded border text-sm">
-                            {cred.username || 'Not set'}
-                          </div>
+                      <div className="space-y-2">
+                        <p className="text-sm text-gray-600">Username: <span className="font-mono bg-gray-100 px-2 py-1 rounded">{cred.username || 'Not Set'}</span></p>
+                        <div className="flex items-center gap-2">
+                          <p className="text-sm text-gray-600">Password: <span className="font-mono bg-gray-100 px-2 py-1 rounded">{showPasswords[cred.team_name] ? cred.password : '••••••••' || 'Not Set'}</span></p>
+                          <button onClick={() => setShowPasswords(p => ({...p, [cred.team_name]: !p[cred.team_name]}))} className="text-gray-500">
+                            {showPasswords[cred.team_name] ? <EyeOff className="h-4 w-4"/> : <Eye className="h-4 w-4"/>}
+                          </button>
                         </div>
-                        <div>
-                          <span className="text-gray-600 font-medium text-sm">Password:</span>
-                          <div className="mt-1 font-mono bg-gray-50 px-3 py-2 rounded border text-sm flex items-center justify-between">
-                            <span>
-                              {showPasswords[cred.team_name] 
-                                ? (cred.password || 'Not set')
-                                : '••••••••'
-                              }
-                            </span>
-                            <button
-                              onClick={() => setShowPasswords(prev => ({
-                                ...prev,
-                                [cred.team_name]: !prev[cred.team_name]
-                              }))}
-                              className="text-gray-400 hover:text-gray-600"
-                            >
-                              {showPasswords[cred.team_name] ? (
-                                <EyeOff className="h-4 w-4" />
-                              ) : (
-                                <Eye className="h-4 w-4" />
-                              )}
-                            </button>
-                          </div>
-                        </div>
+                        <button onClick={() => startEditingCredentials(cred.team_name, cred.username, cred.password)} className="mt-2 px-3 py-1 bg-blue-600 text-white rounded text-sm flex items-center gap-1"><Edit className="h-3 w-3" /> Edit</button>
                       </div>
                     )}
                   </div>

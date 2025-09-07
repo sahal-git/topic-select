@@ -1,87 +1,50 @@
 import React, { useState, useEffect } from 'react';
-import { supabase, Topic, Team, AppSettings } from '../lib/supabase';
-import { ChevronRight, CheckCircle, Users, Trophy, Clock, Star, Shield } from 'lucide-react';
+import { supabase, Topic, ItemWithData, Team } from '../lib/supabase';
+import { ChevronRight, CheckCircle, Users, Trophy, Clock, Shield, FolderOpen, ChevronDown, Check, Star } from 'lucide-react';
 
 interface TeamSelectionProps {
   team: Team;
 }
 
 export default function TeamSelection({ team }: TeamSelectionProps) {
-  const [topics, setTopics] = useState<Topic[]>([]);
-  const [selectedTopic, setSelectedTopic] = useState<Topic | null>(null);
+  const [items, setItems] = useState<ItemWithData[]>([]);
   const [isAppLive, setIsAppLive] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
-  const [showConfirmation, setShowConfirmation] = useState(false);
+  const [showConfirmationToast, setShowConfirmationToast] = useState<{ message: string } | null>(null);
+  const [expandedItems, setExpandedItems] = useState<Set<string>>(new Set());
 
-  useEffect(() => {
-    fetchTopics();
-    fetchAppLiveStatus();
-
-    const refreshInterval = setInterval(() => {
-      fetchTopics();
-      fetchAppLiveStatus();
-    }, 1000);
-    
-    const channel = supabase
-      .channel(`topics-${team}`)
-      .on('postgres_changes', 
-        { event: 'INSERT', schema: 'public', table: 'topics' },
-        (payload) => {
-          setTopics(prev => [...prev, payload.new as Topic]);
-        }
-      )
-      .on('postgres_changes', 
-        { event: 'UPDATE', schema: 'public', table: 'topics' },
-        (payload) => {
-          const updatedTopic = payload.new as Topic;
-          setTopics(prev => prev.map(topic => 
-            topic.id === updatedTopic.id ? updatedTopic : topic
-          ));
-          
-          if (updatedTopic.selected_by_team === team) {
-            setSelectedTopic(updatedTopic);
-            if (!selectedTopic) {
-              setShowConfirmation(true);
-              setTimeout(() => setShowConfirmation(false), 3000);
-            }
-          } else if (selectedTopic && selectedTopic.id === updatedTopic.id && updatedTopic.selected_by_team !== team) {
-            setSelectedTopic(null);
-          }
-        }
-      )
-      .on('postgres_changes', 
-        { event: 'DELETE', schema: 'public', table: 'topics' },
-        (payload) => {
-          setTopics(prev => prev.filter(topic => topic.id !== payload.old.id));
-          if (selectedTopic && selectedTopic.id === payload.old.id) {
-            setSelectedTopic(null);
-          }
-        }
-      )
-      .subscribe();
-
-    return () => {
-      clearInterval(refreshInterval);
-      supabase.removeChannel(channel);
-    };
-  }, [team]);
-
-  const fetchTopics = async () => {
+  const fetchData = async () => {
     try {
-      const { data, error } = await supabase
+      const { data: itemsData, error: itemsError } = await supabase
+        .from('items')
+        .select('*')
+        .order('created_at', { ascending: true });
+      if (itemsError) throw itemsError;
+
+      const { data: topicsData, error: topicsError } = await supabase
         .from('topics')
         .select('*')
         .order('created_at', { ascending: true });
+      if (topicsError) throw topicsError;
 
-      if (error) throw error;
-      
-      const allTopics = data || [];
-      setTopics(allTopics);
-      
-      const teamSelection = allTopics.find(topic => topic.selected_by_team === team);
-      setSelectedTopic(teamSelection || null);
+      const itemsWithData = (itemsData || []).map(item => ({
+        ...item,
+        topics: (topicsData || []).filter(topic => topic.item_id === item.id),
+      }));
+
+      setItems(itemsWithData);
+
+      const itemsToExpand = new Set<string>();
+      itemsWithData.forEach(item => {
+        const teamHasCompleted = item.topics.some(t => t.selected_by_team === team);
+        if (!teamHasCompleted && item.topics.some(t => !t.selected_by_team)) {
+          itemsToExpand.add(item.id);
+        }
+      });
+      setExpandedItems(prev => new Set([...prev, ...itemsToExpand]));
+
     } catch (error) {
-      console.error('Error fetching topics:', error);
+      console.error('Error fetching items and topics:', error);
     }
   };
 
@@ -92,7 +55,6 @@ export default function TeamSelection({ team }: TeamSelectionProps) {
         .select('value')
         .eq('key', 'app_live')
         .single();
-
       if (error) throw error;
       setIsAppLive(data?.value === 'true');
     } catch (error) {
@@ -100,56 +62,75 @@ export default function TeamSelection({ team }: TeamSelectionProps) {
     }
   };
 
-  const selectTopic = async (topicId: string) => {
+  useEffect(() => {
+    fetchData();
+    fetchAppLiveStatus();
+
+    const refreshInterval = setInterval(fetchData, 2000);
+    const appStatusInterval = setInterval(fetchAppLiveStatus, 5000);
+    
+    const channel = supabase
+      .channel(`realtime-updates-${team}`)
+      .on('postgres_changes', { event: '*', schema: 'public' }, fetchData)
+      .subscribe();
+
+    return () => {
+      clearInterval(refreshInterval);
+      clearInterval(appStatusInterval);
+      supabase.removeChannel(channel);
+    };
+  }, [team]);
+
+  const selectTopic = async (topic: Topic) => {
     setIsLoading(true);
     try {
       const { error } = await supabase
         .from('topics')
         .update({ selected_by_team: team })
-        .eq('id', topicId)
+        .eq('id', topic.id)
         .is('selected_by_team', null);
 
       if (error) throw error;
+
+      setShowConfirmationToast({ message: `Selected "${topic.title}"` });
+      setTimeout(() => setShowConfirmationToast(null), 3000);
+      fetchData();
+
     } catch (error) {
       console.error('Error selecting topic:', error);
-      fetchTopics();
     } finally {
       setIsLoading(false);
     }
   };
 
+  const toggleItemExpansion = (itemId: string) => {
+    setExpandedItems(prev => {
+      const newSet = new Set(prev);
+      if (newSet.has(itemId)) {
+        newSet.delete(itemId);
+      } else {
+        newSet.add(itemId);
+      }
+      return newSet;
+    });
+  };
+
   const getTeamConfig = (team: Team) => {
     switch (team) {
-      case 'Almaria':
-        return {
-          bgColor: 'bg-blue-500',
-          bgLight: 'bg-blue-50',
-          textColor: 'text-blue-600',
-          borderColor: 'border-blue-200'
-        };
-      case 'Tolido':
-        return {
-          bgColor: 'bg-green-500',
-          bgLight: 'bg-green-50',
-          textColor: 'text-green-600',
-          borderColor: 'border-green-200'
-        };
-      case 'Zaragoza':
-        return {
-          bgColor: 'bg-purple-500',
-          bgLight: 'bg-purple-50',
-          textColor: 'text-purple-600',
-          borderColor: 'border-purple-200'
-        };
+      case 'Almaria': return { bgColor: 'bg-blue-500', bgLight: 'bg-blue-50', borderColor: 'border-blue-200', textColor: 'text-blue-800' };
+      case 'Tolido': return { bgColor: 'bg-green-500', bgLight: 'bg-green-50', borderColor: 'border-green-200', textColor: 'text-green-800' };
+      case 'Zaragoza': return { bgColor: 'bg-purple-500', bgLight: 'bg-purple-50', borderColor: 'border-purple-200', textColor: 'text-purple-800' };
     }
   };
 
   const config = getTeamConfig(team);
-  const availableTopics = topics.filter(topic => !topic.selected_by_team);
+  
+  const completedCount = items.reduce((count, item) => {
+    return count + (item.topics.some(t => t.selected_by_team === team) ? 1 : 0);
+  }, 0);
 
   return (
     <div className="min-h-screen bg-gray-50">
-      {/* Compact Header */}
       <div className="bg-white border-b">
         <div className="max-w-4xl mx-auto px-4 py-6">
           <div className="text-center">
@@ -158,7 +139,7 @@ export default function TeamSelection({ team }: TeamSelectionProps) {
               <h1 className="text-2xl font-bold">Team {team}</h1>
             </div>
             <p className="text-gray-600">
-              {selectedTopic ? 'Topic selected successfully!' : 'Choose your fest topic'}
+              Select one topic from each category below.
             </p>
           </div>
         </div>
@@ -167,134 +148,109 @@ export default function TeamSelection({ team }: TeamSelectionProps) {
       <div className="max-w-4xl mx-auto px-4 py-6">
         <div className="bg-white rounded-xl shadow-sm border">
           {!isAppLive ? (
-            /* Waiting State */
             <div className="p-8 text-center">
-              <div className="inline-flex items-center gap-3 text-orange-600 mb-6">
-                <div className="bg-orange-100 p-4 rounded-full">
-                  <Shield className="h-12 w-12" />
-                </div>
-              </div>
-              <h2 className="text-2xl font-bold text-gray-900 mb-4">Waiting for Controller's Permission</h2>
-              <p className="text-gray-600 mb-6 max-w-md mx-auto">
-                The topic selection is currently offline. Please wait for the event controller to make the system live.
-              </p>
-              <div className="inline-flex items-center gap-2 text-sm text-orange-600 bg-orange-50 px-4 py-2 rounded-full border border-orange-200">
-                <div className="w-2 h-2 bg-orange-500 rounded-full animate-pulse"></div>
-                <span>System Offline</span>
-              </div>
+              <Shield className="h-16 w-16 text-orange-500 mx-auto mb-4" />
+              <h2 className="text-2xl font-bold text-gray-800 mb-2">System Offline</h2>
+              <p className="text-gray-600">The topic selection is currently not live. Please wait for the admin to start the event.</p>
             </div>
           ) : (
             <>
-          {/* Status Bar */}
-          <div className={`${config.bgLight} px-6 py-4 border-b ${config.borderColor}`}>
-            <div className="flex items-center justify-between">
-              <div className={`font-medium ${config.textColor} flex items-center gap-2`}>
-                {selectedTopic ? (
-                  <>
-                    <CheckCircle className="h-5 w-5 text-green-600" />
-                    Topic Selected
-                  </>
-                ) : (
-                  <>
-                    <Clock className="h-5 w-5" />
-                    Selection in Progress
-                  </>
-                )}
+              <div className={`${config.bgLight} px-6 py-4 border-b ${config.borderColor}`}>
+                <div className="flex items-center justify-between">
+                  <div className={`font-medium ${config.textColor} flex items-center gap-2`}>
+                    <Trophy className="h-5 w-5" />
+                    <span>Completed: {completedCount} / {items.length}</span>
+                  </div>
+                </div>
               </div>
-              <div className="text-sm text-gray-600">
-                {availableTopics.length} available
-              </div>
-            </div>
-          </div>
 
-          <div className="p-6">
-            {selectedTopic ? (
-              /* Selected State - Compact */
-              <div className="text-center space-y-6">
-                <div className="inline-flex items-center gap-3 text-green-600 mb-4">
-                  <div className="bg-green-100 p-3 rounded-full">
-                    <Trophy className="h-8 w-8" />
-                  </div>
-                </div>
-                <h2 className="text-2xl font-bold text-gray-900">Congratulations!</h2>
-                <div className="bg-gray-50 rounded-lg p-6 border max-w-2xl mx-auto">
-                  <div className="text-xl font-bold text-gray-900 mb-2">
-                    {selectedTopic.title}
-                  </div>
-                  <div className={`inline-block px-3 py-1 rounded-full text-sm font-medium ${config.bgLight} ${config.textColor} border ${config.borderColor}`}>
-                    Selected by Team {team}
-                  </div>
-                </div>
-                <p className="text-gray-600 max-w-xl mx-auto">
-                  Your team has successfully selected this topic. Good luck with your presentation!
-                </p>
-              </div>
-            ) : (
-              /* Selection Interface - Compact */
-              <div className="space-y-6">
-                <div className="text-center">
-                  <h2 className="text-2xl font-bold text-gray-900 mb-2">Choose Your Topic</h2>
-                  <p className="text-gray-600">
-                    <span className="font-semibold text-primary-600">{availableTopics.length}</span> topics available
-                  </p>
-                </div>
+              <div className="p-6">
+                <div className="space-y-4">
+                  {items.length === 0 ? (
+                    <div className="text-center py-12">
+                      <FolderOpen className="h-12 w-12 text-gray-400 mx-auto mb-3" />
+                      <p className="text-gray-500">No categories have been added yet.</p>
+                      <p className="text-gray-500 text-sm">Please wait for the admin to set up the event.</p>
+                    </div>
+                  ) : (
+                    items.map((item) => {
+                      const teamSelection = item.topics.find(t => t.selected_by_team === team);
+                      const isItemCompleted = !!teamSelection;
 
-                {availableTopics.length === 0 ? (
-                  <div className="text-center py-12">
-                    <div className="text-gray-400 mb-4">
-                      <Users className="h-16 w-16 mx-auto" />
-                    </div>
-                    <div className="text-xl font-bold text-gray-900 mb-2">
-                      No Topics Available
-                    </div>
-                    <p className="text-gray-600">
-                      All topics have been selected by other teams.
-                    </p>
-                  </div>
-                ) : (
-                  <div className="space-y-3">
-                    {availableTopics.map((topic, index) => (
-                      <button
-                        key={topic.id}
-                        onClick={() => selectTopic(topic.id)}
-                        disabled={isLoading}
-                        className="w-full p-4 text-left rounded-lg border border-gray-200 hover:border-gray-300 hover:shadow-sm transition-all disabled:opacity-50 disabled:cursor-not-allowed group bg-white"
-                      >
-                        <div className="flex items-center justify-between">
-                          <div className="flex items-center gap-3">
-                            <div className="bg-gray-100 text-gray-600 font-bold text-sm w-8 h-8 rounded flex items-center justify-center">
-                              {index + 1}
-                            </div>
-                            <div className="flex-1">
-                              <div className="font-medium text-gray-900 group-hover:text-gray-700 mb-1">
-                                {topic.title}
+                      return (
+                        <div key={item.id} className={`border rounded-lg overflow-hidden transition-all ${isItemCompleted ? 'bg-green-50 border-green-200' : 'bg-white'}`}>
+                          <button
+                            onClick={() => toggleItemExpansion(item.id)}
+                            className={`w-full p-4 text-left transition-colors ${isItemCompleted ? 'hover:bg-green-100' : 'bg-gray-50 hover:bg-gray-100'}`}
+                          >
+                            <div className="flex items-center justify-between">
+                              <div className="flex items-center gap-3">
+                                {isItemCompleted ? <CheckCircle className="h-6 w-6 text-green-600" /> : (expandedItems.has(item.id) ? <ChevronDown className="h-5 w-5 text-gray-400" /> : <ChevronRight className="h-5 w-5 text-gray-400" />)}
+                                <div>
+                                  <div className={`font-semibold text-lg ${isItemCompleted ? 'text-green-900' : 'text-gray-900'}`}>{item.title}</div>
+                                  <div className="text-sm text-gray-600">{item.topics.filter(t => !t.selected_by_team).length} topics available</div>
+                                </div>
                               </div>
-                              <div className="text-sm text-gray-500">
-                                Click to select for your team
+                              <div className={`text-sm font-medium px-3 py-1 rounded-full ${isItemCompleted ? 'bg-green-200 text-green-800' : 'bg-gray-200 text-gray-600'}`}>
+                                {isItemCompleted ? 'Completed' : 'Pending'}
                               </div>
                             </div>
-                          </div>
-                          <div className={`${config.textColor} opacity-0 group-hover:opacity-100 transition-opacity`}>
-                            <ChevronRight className="h-5 w-5" />
-                          </div>
+                          </button>
+
+                          {expandedItems.has(item.id) && (
+                            <div className="border-t bg-white p-4">
+                              {isItemCompleted ? (
+                                <div className="p-4 rounded-lg bg-white border-2 border-dashed border-green-300 flex items-center gap-2">
+                                  <Star className="h-5 w-5 text-yellow-500 fill-current" />
+                                  <div>
+                                    <p className="text-sm text-green-800 font-medium">Your selection:</p>
+                                    <span className="text-lg font-bold text-green-900">{teamSelection!.title}</span>
+                                  </div>
+                                </div>
+                              ) : (
+                                <div className="space-y-2">
+                                  {item.topics.map((topic) => (
+                                    <button
+                                      key={topic.id}
+                                      onClick={() => selectTopic(topic)}
+                                      disabled={isLoading || !!topic.selected_by_team}
+                                      className={`w-full text-left p-3 border rounded-lg transition-all flex items-center justify-between ${
+                                        topic.selected_by_team
+                                          ? 'bg-gray-200 text-gray-500 cursor-not-allowed'
+                                          : 'bg-white hover:bg-primary-50 hover:border-primary-500'
+                                      }`}
+                                    >
+                                      <span className="font-medium">{topic.title}</span>
+                                      {topic.selected_by_team ? (
+                                        <span className="text-xs font-semibold text-red-600">Taken by Team {topic.selected_by_team}</span>
+                                      ) : (
+                                        <span className="text-xs font-semibold text-green-600 flex items-center gap-1"><Check className="h-4 w-4" /> Available</span>
+                                      )}
+                                    </button>
+                                  ))}
+                                  {item.topics.length === 0 && <p className="text-gray-500 text-sm">No topics available for this item yet.</p>}
+                                </div>
+                              )}
+                            </div>
+                          )}
                         </div>
-                      </button>
-                    ))}
-                  </div>
-                )}
+                      );
+                    })
+                  )}
+                </div>
               </div>
-            )}
-          </div>
             </>
           )}
         </div>
       </div>
 
-      {/* Confirmation Toast */}
-      {showConfirmation && (
-        <div className="fixed top-20 right-4 bg-green-600 text-white px-6 py-3 rounded-lg shadow-lg flex items-center gap-2 z-50 animate-slide-in">
+      {showConfirmationToast && (
+        <div className="fixed top-20 right-4 bg-green-600 text-white px-6 py-3 rounded-lg shadow-lg flex items-center gap-3 z-50 animate-slide-in">
           <CheckCircle className="h-5 w-5" />
-          <span className="font-medium">Topic selected!</span>
+          <div>
+            <div className="font-bold">Success!</div>
+            <div className="text-sm text-green-100">{showConfirmationToast.message}</div>
+          </div>
         </div>
       )}
     </div>
