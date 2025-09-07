@@ -12,18 +12,6 @@ interface HomePageProps {
 export default function HomePage({ onViewChange }: HomePageProps) {
   const [isAppLive, setIsAppLive] = useState(false);
 
-  useEffect(() => {
-    fetchAppLiveStatus();
-
-    const refreshInterval = setInterval(() => {
-      fetchAppLiveStatus();
-    }, 1000);
-
-    return () => {
-      clearInterval(refreshInterval);
-    };
-  }, []);
-
   const fetchAppLiveStatus = async () => {
     try {
       const { data, error } = await supabase
@@ -38,6 +26,19 @@ export default function HomePage({ onViewChange }: HomePageProps) {
       console.error('Error fetching app live status:', error);
     }
   };
+
+  useEffect(() => {
+    fetchAppLiveStatus();
+
+    const channel = supabase
+      .channel('home-page-realtime')
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'app_settings', filter: 'key=eq.app_live' }, fetchAppLiveStatus)
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(channel);
+    };
+  }, []);
 
   const getTeamColor = (team: Team) => {
     switch (team) {

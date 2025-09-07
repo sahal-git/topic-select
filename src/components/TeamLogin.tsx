@@ -16,17 +16,6 @@ export default function TeamLogin({ team, onLoginSuccess }: TeamLoginProps) {
   const [error, setError] = useState('');
   const [isLoading, setIsLoading] = useState(false);
 
-  useEffect(() => {
-    fetchTeamCredentials();
-    fetchAppLiveStatus();
-
-    const refreshInterval = setInterval(() => {
-      fetchAppLiveStatus();
-    }, 1000);
-
-    return () => clearInterval(refreshInterval);
-  }, [team]);
-
   const fetchTeamCredentials = async () => {
     try {
       const { data, error } = await supabase
@@ -56,6 +45,20 @@ export default function TeamLogin({ team, onLoginSuccess }: TeamLoginProps) {
       console.error('Error fetching app live status:', error);
     }
   };
+
+  useEffect(() => {
+    fetchTeamCredentials();
+    fetchAppLiveStatus();
+
+    const channel = supabase
+      .channel(`team-login-realtime-${team}`)
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'app_settings', filter: 'key=eq.app_live' }, fetchAppLiveStatus)
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(channel);
+    };
+  }, [team]);
 
   const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();
