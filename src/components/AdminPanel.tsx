@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { supabase, Topic, ItemWithData, TeamCredentials, TEAMS, ContentItem, TeamContentSubmission, ContentItemWithSubmissions } from '../lib/supabase';
-import { Plus, Trash2, RefreshCw, Users, CheckCircle, Circle, Key, Save, Shield, Edit, Trophy, BarChart3, LogOut, Eye, EyeOff, Power, PowerOff, FolderOpen, ChevronDown, ChevronRight, ListChecks, FileText, Link, ToggleLeft, ToggleRight } from 'lucide-react';
+import { Plus, Trash2, RefreshCw, Users, CheckCircle, Circle, Key, Save, Shield, Edit, Trophy, BarChart3, LogOut, Eye, EyeOff, Power, PowerOff, FolderOpen, ChevronDown, ChevronRight, ListChecks, FileText, Link, ToggleLeft, ToggleRight, Download } from 'lucide-react';
 
 interface AdminPanelProps {}
 
@@ -306,6 +306,108 @@ export default function AdminPanel({}: AdminPanelProps) {
     await supabase.auth.signOut();
   };
 
+  const escapeCSV = (str: any): string => {
+    if (str === null || str === undefined) {
+      return '';
+    }
+    let result = String(str);
+    if (result.search(/("|,|\n)/g) >= 0) {
+      result = result.replace(/"/g, '""');
+      result = `"${result}"`;
+    }
+    return result;
+  };
+
+  const convertToCSV = (data: Record<string, any>[], headers: Record<string, string>) => {
+    const headerKeys = Object.keys(headers);
+    const headerDisplay = Object.values(headers);
+
+    const headerRow = headerDisplay.join(',');
+    const rows = data.map(row =>
+      headerKeys.map(key => escapeCSV(row[key])).join(',')
+    );
+    return [headerRow, ...rows].join('\n');
+  };
+
+  const downloadCSV = (csvString: string, filename: string) => {
+    const blob = new Blob([csvString], { type: 'text/csv;charset=utf-8;' });
+    const link = document.createElement('a');
+    const url = URL.createObjectURL(blob);
+    link.setAttribute('href', url);
+    link.setAttribute('download', filename);
+    link.style.visibility = 'hidden';
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    URL.revokeObjectURL(url);
+  };
+
+  const exportTopicSelections = () => {
+    const dataToExport: any[] = [];
+    items.forEach(item => {
+      item.topics.forEach(topic => {
+        dataToExport.push({
+          category: item.title,
+          topic: topic.title,
+          team: topic.selected_by_team || 'Not Selected',
+          timestamp: topic.selected_by_team ? new Date(topic.updated_at).toLocaleString() : '',
+        });
+      });
+    });
+
+    const headers = {
+      category: 'Category',
+      topic: 'Topic',
+      team: 'Selected By Team',
+      timestamp: 'Selection Timestamp',
+    };
+
+    const csv = convertToCSV(dataToExport, headers);
+    downloadCSV(csv, `topic_selections_${new Date().toISOString().split('T')[0]}.csv`);
+  };
+
+  const exportContentSubmissions = () => {
+    const dataToExport: any[] = [];
+    contentItems.forEach(contentItem => {
+      if (contentItem.submissions.length > 0) {
+        contentItem.submissions.forEach(submission => {
+          dataToExport.push({
+            category: contentItem.title,
+            team: submission.team_name,
+            name: submission.content_name,
+            description: submission.content_description,
+            link: submission.content_link,
+            submitted_at: new Date(submission.submitted_at).toLocaleString(),
+            updated_at: new Date(submission.updated_at).toLocaleString(),
+          });
+        });
+      } else {
+        dataToExport.push({
+          category: contentItem.title,
+          team: 'No Submission',
+          name: '',
+          description: '',
+          link: '',
+          submitted_at: '',
+          updated_at: '',
+        });
+      }
+    });
+
+    const headers = {
+      category: 'Content Category',
+      team: 'Team',
+      name: 'Submission Name',
+      description: 'Submission Description',
+      link: 'Submission Link',
+      submitted_at: 'Submitted At',
+      updated_at: 'Last Updated At',
+    };
+
+    const csv = convertToCSV(dataToExport, headers);
+    downloadCSV(csv, `content_submissions_${new Date().toISOString().split('T')[0]}.csv`);
+  };
+
   const toggleItemExpansion = (itemId: string) => {
     setExpandedItems(prev => {
       const newSet = new Set(prev);
@@ -434,6 +536,20 @@ export default function AdminPanel({}: AdminPanelProps) {
                 >
                   <RefreshCw className="h-4 w-4" />
                   Reset All
+                </button>
+                <button
+                  onClick={exportTopicSelections}
+                  className="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-sm font-medium transition-colors flex items-center gap-2"
+                >
+                  <Download className="h-4 w-4" />
+                  Export Topics
+                </button>
+                <button
+                  onClick={exportContentSubmissions}
+                  className="px-4 py-2 bg-purple-600 hover:bg-purple-700 text-white rounded-lg text-sm font-medium transition-colors flex items-center gap-2"
+                >
+                  <Download className="h-4 w-4" />
+                  Export Content
                 </button>
               </div>
               <div className="mt-3 p-3 bg-gray-50 rounded-lg">
@@ -610,35 +726,41 @@ export default function AdminPanel({}: AdminPanelProps) {
                             ) : (
                               <div className="space-y-3">
                                 {TEAMS.map(team => {
-                                  const teamSubmission = item.submissions.find(sub => sub.team_name === team);
+                                  const teamSubmissions = item.submissions.filter(sub => sub.team_name === team);
                                   return (
-                                    <div key={team} className={`p-3 border rounded-lg ${teamSubmission ? 'bg-green-50 border-green-200' : 'bg-gray-50 border-gray-200'}`}>
+                                    <div key={team} className={`p-3 border rounded-lg ${teamSubmissions.length > 0 ? 'bg-green-50 border-green-200' : 'bg-gray-50 border-gray-200'}`}>
                                       <div className="flex items-center justify-between mb-2">
                                         <span className={`font-medium text-sm px-2 py-1 rounded ${getTeamColor(team)}`}>
                                           Team {team}
                                         </span>
-                                        {teamSubmission ? (
-                                          <span className="text-xs text-green-600 font-medium">Submitted</span>
-                                        ) : (
-                                          <span className="text-xs text-gray-500">Not submitted</span>
-                                        )}
+                                        <span className={`text-xs font-medium px-2 py-1 rounded-full ${teamSubmissions.length > 0 ? 'bg-green-200 text-green-800' : 'bg-gray-200 text-gray-700'}`}>
+                                          {teamSubmissions.length} / 2 submitted
+                                        </span>
                                       </div>
-                                      {teamSubmission && (
-                                        <div className="space-y-1">
-                                          <p className="font-medium text-sm">{teamSubmission.content_name}</p>
-                                          {teamSubmission.content_description && (
-                                            <p className="text-xs text-gray-600">{teamSubmission.content_description}</p>
-                                          )}
-                                          {teamSubmission.content_link && (
-                                            <div className="flex items-center gap-1">
-                                              <Link className="h-3 w-3 text-blue-600" />
-                                              <a href={teamSubmission.content_link} target="_blank" rel="noopener noreferrer" className="text-xs text-blue-600 hover:underline">
-                                                {teamSubmission.content_link}
-                                              </a>
+                                      {teamSubmissions.length > 0 ? (
+                                        <div className="space-y-3">
+                                          {teamSubmissions.map((submission, index) => (
+                                            <div key={submission.id} className="p-2 bg-white rounded-md border border-gray-200">
+                                              <p className="font-medium text-sm text-gray-800">
+                                                <span className="font-bold">#{index + 1}:</span> {submission.content_name}
+                                              </p>
+                                              {submission.content_description && (
+                                                <p className="text-xs text-gray-600 mt-1">{submission.content_description}</p>
+                                              )}
+                                              {submission.content_link && (
+                                                <div className="flex items-center gap-1 mt-1">
+                                                  <Link className="h-3 w-3 text-blue-600" />
+                                                  <a href={submission.content_link} target="_blank" rel="noopener noreferrer" className="text-xs text-blue-600 hover:underline truncate">
+                                                    {submission.content_link}
+                                                  </a>
+                                                </div>
+                                              )}
+                                              <p className="text-xs text-gray-400 mt-1">Submitted: {new Date(submission.submitted_at).toLocaleString('en-US', { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit', hour12: true })}</p>
                                             </div>
-                                          )}
-                                          <p className="text-xs text-gray-400">Submitted: {new Date(teamSubmission.submitted_at).toLocaleString('en-US', { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit', hour12: true })}</p>
+                                          ))}
                                         </div>
+                                      ) : (
+                                        <p className="text-xs text-gray-500">No submissions from Team {team}</p>
                                       )}
                                     </div>
                                   );

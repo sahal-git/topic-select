@@ -1,6 +1,8 @@
 import React, { useState, useEffect } from 'react';
 import { supabase, ContentItem, TeamContentSubmission, Team } from '../lib/supabase';
-import { Save, FileText, Shield, Users, Trophy, CheckCircle, Clock, ArrowLeft, Link, Edit3, Send } from 'lucide-react';
+import { Save, FileText, Shield, Users, Trophy, CheckCircle, Clock, ArrowLeft, Link, Edit3, Send, PlusCircle } from 'lucide-react';
+
+type FormData = { id: string | null; name: string; description: string; link: string };
 
 interface TeamContentProps {
   team: Team;
@@ -13,7 +15,7 @@ export default function TeamContent({ team, onViewChange }: TeamContentProps) {
   const [isAppLive, setIsAppLive] = useState(false);
   const [isLoading, setIsLoading] = useState<string | null>(null);
   const [showConfirmationToast, setShowConfirmationToast] = useState<{ message: string } | null>(null);
-  const [formData, setFormData] = useState<{[key: string]: {name: string, description: string, link: string}}>({});
+  const [formData, setFormData] = useState<{ [key: string]: FormData[] }>({});
 
   const fetchData = async () => {
     try {
@@ -35,19 +37,28 @@ export default function TeamContent({ team, onViewChange }: TeamContentProps) {
       setContentItems(contentData || []);
       setSubmissions(submissionsData || []);
 
-      // Initialize form data for items without submissions
-      const initialFormData: {[key: string]: {name: string, description: string, link: string}} = {};
+      // Initialize form data
+      const initialFormData: { [key: string]: FormData[] } = {};
       (contentData || []).forEach(item => {
-        const existingSubmission = (submissionsData || []).find(sub => sub.content_item_id === item.id);
-        if (existingSubmission) {
-          initialFormData[item.id] = {
-            name: existingSubmission.content_name,
-            description: existingSubmission.content_description || '',
-            link: existingSubmission.content_link || ''
-          };
-        } else {
-          initialFormData[item.id] = { name: '', description: '', link: '' };
+        const teamSubmissions = (submissionsData || [])
+          .filter(sub => sub.content_item_id === item.id)
+          .sort((a, b) => new Date(a.submitted_at).getTime() - new Date(b.submitted_at).getTime());
+
+        const forms: FormData[] = [];
+        for (let i = 0; i < 2; i++) {
+          const submission = teamSubmissions[i];
+          if (submission) {
+            forms.push({
+              id: submission.id,
+              name: submission.content_name,
+              description: submission.content_description || '',
+              link: submission.content_link || '',
+            });
+          } else {
+            forms.push({ id: null, name: '', description: '', link: '' });
+          }
         }
+        initialFormData[item.id] = forms;
       });
       setFormData(initialFormData);
 
@@ -86,45 +97,47 @@ export default function TeamContent({ team, onViewChange }: TeamContentProps) {
     };
   }, [team]);
 
-  const updateFormData = (itemId: string, field: 'name' | 'description' | 'link', value: string) => {
-    setFormData(prev => ({
-      ...prev,
-      [itemId]: {
-        ...prev[itemId],
-        [field]: value
-      }
-    }));
+  const updateFormData = (itemId: string, submissionIndex: number, field: 'name' | 'description' | 'link', value: string) => {
+    setFormData(prev => {
+      const newForms = [...(prev[itemId] || [])];
+      newForms[submissionIndex] = {
+        ...newForms[submissionIndex],
+        [field]: value,
+      };
+      return {
+        ...prev,
+        [itemId]: newForms,
+      };
+    });
   };
 
-  const submitContent = async (contentItemId: string) => {
-    const data = formData[contentItemId];
-    if (!data.name.trim()) return;
+  const submitContent = async (contentItemId: string, submissionIndex: number) => {
+    const formState = formData[contentItemId][submissionIndex];
+    if (!formState.name.trim()) return;
     
     const itemConfig = contentItems.find(ci => ci.id === contentItemId);
-    if (itemConfig?.allow_links && !data.link.trim()) {
+    if (itemConfig?.allow_links && !formState.link.trim()) {
         alert('Link is required for this item.');
         return;
     }
 
-    setIsLoading(contentItemId);
+    setIsLoading(`${contentItemId}-${submissionIndex}`);
     try {
-      const existingSubmission = submissions.find(sub => sub.content_item_id === contentItemId);
-      
       const submissionData = {
         content_item_id: contentItemId,
         team_name: team,
-        content_name: data.name.trim(),
-        content_description: data.description.trim() || null,
-        content_link: data.link.trim() || null,
+        content_name: formState.name.trim(),
+        content_description: formState.description.trim() || null,
+        content_link: formState.link.trim() || null,
         updated_at: new Date().toISOString()
       };
 
-      if (existingSubmission) {
+      if (formState.id) {
         // Update existing submission
         const { error } = await supabase
           .from('team_content_submissions')
           .update(submissionData)
-          .eq('id', existingSubmission.id);
+          .eq('id', formState.id);
         if (error) throw error;
       } else {
         // Insert new submission
@@ -134,7 +147,7 @@ export default function TeamContent({ team, onViewChange }: TeamContentProps) {
         if (error) throw error;
       }
 
-      setShowConfirmationToast({ message: `Content ${existingSubmission ? 'updated' : 'submitted'} successfully!` });
+      setShowConfirmationToast({ message: `Content ${formState.id ? 'updated' : 'submitted'} successfully!` });
       setTimeout(() => setShowConfirmationToast(null), 3000);
       fetchData();
 
@@ -155,7 +168,10 @@ export default function TeamContent({ team, onViewChange }: TeamContentProps) {
 
   const config = getTeamConfig(team);
   
-  const completedCount = submissions.length;
+  const completedCount = contentItems.reduce((count, item) => {
+    const teamSubmissions = submissions.filter(s => s.content_item_id === item.id);
+    return count + (teamSubmissions.length >= 2 ? 1 : 0);
+  }, 0);
 
   return (
     <div className="min-h-screen bg-gray-50">
@@ -167,7 +183,7 @@ export default function TeamContent({ team, onViewChange }: TeamContentProps) {
               <h1 className="text-2xl font-bold">Team {team} - Content Submission</h1>
             </div>
             <p className="text-gray-600 mb-4">
-              Submit your content for each category below.
+              Submit up to two entries for each category below.
             </p>
             
             {/* Navigation Tabs */}
@@ -203,7 +219,7 @@ export default function TeamContent({ team, onViewChange }: TeamContentProps) {
                 <div className="flex items-center justify-between">
                   <div className={`font-medium ${config.textColor} flex items-center gap-2`}>
                     <Trophy className="h-5 w-5" />
-                    <span>Submitted: {completedCount} / {contentItems.length}</span>
+                    <span>Completed Categories: {completedCount} / {contentItems.length}</span>
                   </div>
                 </div>
               </div>
@@ -218,102 +234,118 @@ export default function TeamContent({ team, onViewChange }: TeamContentProps) {
                     </div>
                   ) : (
                     contentItems.map((item) => {
-                      const submission = submissions.find(sub => sub.content_item_id === item.id);
-                      const formDataForItem = formData[item.id] || { name: '', description: '', link: '' };
-                      const isSubmitted = !!submission;
+                      const teamSubmissions = submissions.filter(sub => sub.content_item_id === item.id);
+                      const isComplete = teamSubmissions.length >= 2;
+                      const forms = formData[item.id] || [];
 
                       return (
-                        <div key={item.id} className={`border rounded-lg overflow-hidden transition-all ${isSubmitted ? 'bg-green-50 border-green-200' : 'bg-white'}`}>
-                          <div className={`p-4 ${isSubmitted ? 'bg-green-100' : 'bg-gray-50'} border-b`}>
+                        <div key={item.id} className={`border rounded-lg overflow-hidden transition-all ${isComplete ? 'bg-green-50 border-green-200' : 'bg-white'}`}>
+                          <div className={`p-4 ${isComplete ? 'bg-green-100' : 'bg-gray-50'} border-b`}>
                             <div className="flex items-center justify-between">
                               <div className="flex items-center gap-3">
-                                {isSubmitted ? <CheckCircle className="h-6 w-6 text-green-600" /> : <Clock className="h-6 w-6 text-orange-500" />}
+                                {isComplete ? <CheckCircle className="h-6 w-6 text-green-600" /> : <Clock className="h-6 w-6 text-orange-500" />}
                                 <div>
-                                  <h3 className={`font-semibold text-lg ${isSubmitted ? 'text-green-900' : 'text-gray-900'}`}>{item.title}</h3>
+                                  <h3 className={`font-semibold text-lg ${isComplete ? 'text-green-900' : 'text-gray-900'}`}>{item.title}</h3>
                                   {item.description && <p className="text-sm text-gray-600">{item.description}</p>}
                                 </div>
                               </div>
-                              <div className={`text-sm font-medium px-3 py-1 rounded-full ${isSubmitted ? 'bg-green-200 text-green-800' : 'bg-orange-200 text-orange-800'}`}>
-                                {isSubmitted ? 'Submitted' : 'Pending'}
+                              <div className={`text-sm font-medium px-3 py-1 rounded-full ${isComplete ? 'bg-green-200 text-green-800' : 'bg-orange-200 text-orange-800'}`}>
+                                Submitted {teamSubmissions.length} / 2
                               </div>
                             </div>
                           </div>
 
-                          <div className="p-4 bg-white">
-                            <div className="space-y-4">
-                              <div>
-                                <label className="block text-sm font-medium text-gray-700 mb-2">
-                                  Content Name <span className="text-red-500">*</span>
-                                </label>
-                                <input
-                                  type="text"
-                                  value={formDataForItem.name}
-                                  onChange={(e) => updateFormData(item.id, 'name', e.target.value)}
-                                  className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-transparent outline-none"
-                                  placeholder="Enter content name..."
-                                  disabled={isLoading === item.id}
-                                />
-                              </div>
+                          <div className="bg-white divide-y divide-gray-200">
+                            {forms.map((form, index) => {
+                              const isSubmitted = form.id !== null;
+                              return (
+                                <div key={index} className="p-4">
+                                  <div className="space-y-4">
+                                    <div className="flex items-center justify-between">
+                                      <h4 className="font-semibold text-gray-700">Submission #{index + 1}</h4>
+                                      {isSubmitted && (
+                                        <div className="text-xs font-medium px-2 py-1 rounded-full bg-green-100 text-green-800 flex items-center gap-1">
+                                          <CheckCircle className="h-3 w-3"/>
+                                          Submitted
+                                        </div>
+                                      )}
+                                    </div>
+                                    <div>
+                                      <label className="block text-sm font-medium text-gray-700 mb-2">
+                                        Content Name <span className="text-red-500">*</span>
+                                      </label>
+                                      <input
+                                        type="text"
+                                        value={form.name}
+                                        onChange={(e) => updateFormData(item.id, index, 'name', e.target.value)}
+                                        className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-transparent outline-none"
+                                        placeholder="Enter content name..."
+                                        disabled={isLoading === `${item.id}-${index}`}
+                                      />
+                                    </div>
 
-                              <div>
-                                <label className="block text-sm font-medium text-gray-700 mb-2">
-                                  Description
-                                </label>
-                                <textarea
-                                  value={formDataForItem.description}
-                                  onChange={(e) => updateFormData(item.id, 'description', e.target.value)}
-                                  rows={3}
-                                  className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-transparent outline-none resize-none"
-                                  placeholder="Enter content description..."
-                                  disabled={isLoading === item.id}
-                                />
-                              </div>
+                                    <div>
+                                      <label className="block text-sm font-medium text-gray-700 mb-2">
+                                        Description
+                                      </label>
+                                      <textarea
+                                        value={form.description}
+                                        onChange={(e) => updateFormData(item.id, index, 'description', e.target.value)}
+                                        rows={3}
+                                        className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-transparent outline-none resize-none"
+                                        placeholder="Enter content description..."
+                                        disabled={isLoading === `${item.id}-${index}`}
+                                      />
+                                    </div>
 
-                              {item.allow_links && (
-                                <div>
-                                  <label className="block text-sm font-medium text-gray-700 mb-2">
-                                    Link <span className="text-red-500">*</span>
-                                  </label>
-                                  <div className="relative">
-                                    <Link className="absolute left-3 top-1/2 transform -translate-y-1/2 h-5 w-5 text-gray-400" />
-                                    <input
-                                      type="url"
-                                      value={formDataForItem.link}
-                                      onChange={(e) => updateFormData(item.id, 'link', e.target.value)}
-                                      className="w-full pl-10 pr-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-transparent outline-none"
-                                      placeholder="https://example.com"
-                                      disabled={isLoading === item.id}
-                                      required
-                                    />
+                                    {item.allow_links && (
+                                      <div>
+                                        <label className="block text-sm font-medium text-gray-700 mb-2">
+                                          Link {item.allow_links && <span className="text-red-500">*</span>}
+                                        </label>
+                                        <div className="relative">
+                                          <Link className="absolute left-3 top-1/2 transform -translate-y-1/2 h-5 w-5 text-gray-400" />
+                                          <input
+                                            type="url"
+                                            value={form.link}
+                                            onChange={(e) => updateFormData(item.id, index, 'link', e.target.value)}
+                                            className="w-full pl-10 pr-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-transparent outline-none"
+                                            placeholder="https://example.com"
+                                            disabled={isLoading === `${item.id}-${index}`}
+                                            required={item.allow_links}
+                                          />
+                                        </div>
+                                      </div>
+                                    )}
+
+                                    <div className="flex items-center justify-between pt-2">
+                                      {isSubmitted && (
+                                        <div className="text-sm text-gray-500">
+                                          Last updated: {new Date(teamSubmissions.find(s => s.id === form.id)!.updated_at).toLocaleString('en-US', { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit', hour12: true })}
+                                        </div>
+                                      )}
+                                      <button
+                                        onClick={() => submitContent(item.id, index)}
+                                        disabled={isLoading === `${item.id}-${index}` || !form.name.trim() || (item.allow_links && !form.link.trim())}
+                                        className={`ml-auto px-4 py-2 ${config.bgColor} hover:opacity-90 text-white rounded-lg font-medium transition-all disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2`}
+                                      >
+                                        {isLoading === `${item.id}-${index}` ? (
+                                          <>
+                                            <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin"></div>
+                                            Saving...
+                                          </>
+                                        ) : (
+                                          <>
+                                            {isSubmitted ? <Edit3 className="h-4 w-4" /> : <Send className="h-4 w-4" />}
+                                            {isSubmitted ? 'Update' : 'Submit'}
+                                          </>
+                                        )}
+                                      </button>
+                                    </div>
                                   </div>
                                 </div>
-                              )}
-
-                              <div className="flex items-center justify-between pt-2">
-                                {isSubmitted && (
-                                  <div className="text-sm text-gray-500">
-                                    Last updated: {new Date(submission!.updated_at).toLocaleString('en-US', { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit', hour12: true })}
-                                  </div>
-                                )}
-                                <button
-                                  onClick={() => submitContent(item.id)}
-                                  disabled={isLoading === item.id || !formDataForItem.name.trim() || (item.allow_links && !formDataForItem.link.trim())}
-                                  className={`ml-auto px-4 py-2 ${config.bgColor} hover:opacity-90 text-white rounded-lg font-medium transition-all disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2`}
-                                >
-                                  {isLoading === item.id ? (
-                                    <>
-                                      <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin"></div>
-                                      Saving...
-                                    </>
-                                  ) : (
-                                    <>
-                                      {isSubmitted ? <Edit3 className="h-4 w-4" /> : <Send className="h-4 w-4" />}
-                                      {isSubmitted ? 'Update' : 'Submit'}
-                                    </>
-                                  )}
-                                </button>
-                              </div>
-                            </div>
+                              );
+                            })}
                           </div>
                         </div>
                       );
