@@ -41,6 +41,31 @@ export type ItemWithData = Item & {
   topics: Topic[];
 };
 
+export type ContentItem = {
+  id: string;
+  title: string;
+  description: string | null;
+  allow_links: boolean;
+  is_active: boolean;
+  created_at: string;
+  updated_at: string;
+};
+
+export type TeamContentSubmission = {
+  id: string;
+  content_item_id: string;
+  team_name: string;
+  content_name: string;
+  content_description: string | null;
+  content_link: string | null;
+  submitted_at: string;
+  updated_at: string;
+};
+
+export type ContentItemWithSubmissions = ContentItem & {
+  submissions: TeamContentSubmission[];
+};
+
 export type TeamCredentials = {
   id: string;
   team_name: string;

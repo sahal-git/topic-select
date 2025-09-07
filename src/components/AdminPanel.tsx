@@ -1,24 +1,29 @@
 import React, { useState, useEffect } from 'react';
-import { supabase, Topic, ItemWithData, TeamCredentials, TEAMS } from '../lib/supabase';
-import { Plus, Trash2, RefreshCw, Users, CheckCircle, Circle, Key, Save, Shield, Edit, Trophy, BarChart3, LogOut, Eye, EyeOff, Power, PowerOff, FolderOpen, ChevronDown, ChevronRight, ListChecks } from 'lucide-react';
+import { supabase, Topic, ItemWithData, TeamCredentials, TEAMS, ContentItem, TeamContentSubmission, ContentItemWithSubmissions } from '../lib/supabase';
+import { Plus, Trash2, RefreshCw, Users, CheckCircle, Circle, Key, Save, Shield, Edit, Trophy, BarChart3, LogOut, Eye, EyeOff, Power, PowerOff, FolderOpen, ChevronDown, ChevronRight, ListChecks, FileText, Link, ToggleLeft, ToggleRight } from 'lucide-react';
 
 interface AdminPanelProps {}
 
 export default function AdminPanel({}: AdminPanelProps) {
   const [items, setItems] = useState<ItemWithData[]>([]);
   const [teamCredentials, setTeamCredentials] = useState<TeamCredentials[]>([]);
+  const [contentItems, setContentItems] = useState<ContentItemWithSubmissions[]>([]);
   const [isAppLive, setIsAppLive] = useState(false);
   
   const [newItemTitle, setNewItemTitle] = useState('');
   const [newTopicTitle, setNewTopicTitle] = useState('');
   const [selectedItemIdForTopic, setSelectedItemIdForTopic] = useState('');
+  const [newContentItemTitle, setNewContentItemTitle] = useState('');
+  const [newContentItemDescription, setNewContentItemDescription] = useState('');
+  const [newContentItemAllowLinks, setNewContentItemAllowLinks] = useState(false);
 
   const [isLoading, setIsLoading] = useState(false);
   const [isUpdatingLiveStatus, setIsUpdatingLiveStatus] = useState(false);
   const [editingCredentials, setEditingCredentials] = useState<{[key: string]: {username: string, password: string}}>({});
   const [showPasswords, setShowPasswords] = useState<{[key: string]: boolean}>({});
-  const [activeTab, setActiveTab] = useState<'overview' | 'items' | 'credentials'>('overview');
+  const [activeTab, setActiveTab] = useState<'overview' | 'items' | 'credentials' | 'content'>('overview');
   const [expandedItems, setExpandedItems] = useState<Set<string>>(new Set());
+  const [expandedContentItems, setExpandedContentItems] = useState<Set<string>>(new Set());
 
   const fetchData = async () => {
     try {
@@ -54,6 +59,37 @@ export default function AdminPanel({}: AdminPanelProps) {
     }
   };
 
+  const fetchContentData = async () => {
+    try {
+      const { data: contentData, error: contentError } = await supabase
+        .from('content_items')
+        .select('*')
+        .order('created_at', { ascending: true });
+      if (contentError) throw contentError;
+
+      const { data: submissionsData, error: submissionsError } = await supabase
+        .from('team_content_submissions')
+        .select('*')
+        .order('submitted_at', { ascending: false });
+      if (submissionsError) throw submissionsError;
+
+      const contentWithSubmissions = (contentData || []).map(item => ({
+        ...item,
+        submissions: (submissionsData || []).filter(submission => submission.content_item_id === item.id),
+      }));
+
+      setContentItems(contentWithSubmissions);
+
+      const itemsWithSubmissionsIds = new Set(
+        contentWithSubmissions.filter(item => item.submissions.length > 0).map(item => item.id)
+      );
+      setExpandedContentItems(prev => new Set([...prev, ...itemsWithSubmissionsIds]));
+
+    } catch (error) {
+      console.error('Error fetching content data:', error);
+    }
+  };
+
   const fetchTeamCredentials = async () => {
     try {
       const { data, error } = await supabase.from('team_credentials').select('*');
@@ -79,25 +115,17 @@ export default function AdminPanel({}: AdminPanelProps) {
   };
 
   useEffect(() => {
-    fetchData();
-    fetchTeamCredentials();
-    fetchAppLiveStatus();
-
-    const refreshInterval = setInterval(() => {
+    const loadAllData = () => {
       fetchData();
+      fetchContentData();
       fetchTeamCredentials();
       fetchAppLiveStatus();
-    }, 2000);
-    
-    const channel = supabase
-      .channel('admin-realtime')
-      .on('postgres_changes', { event: '*', schema: 'public' }, fetchData)
-      .subscribe();
-
-    return () => {
-      clearInterval(refreshInterval);
-      supabase.removeChannel(channel);
     };
+
+    loadAllData(); // Initial load
+    const intervalId = setInterval(loadAllData, 5000); // Refresh every 5 seconds
+
+    return () => clearInterval(intervalId); // Cleanup on unmount
   }, []);
 
   const toggleAppLiveStatus = async () => {
@@ -156,6 +184,31 @@ export default function AdminPanel({}: AdminPanelProps) {
       setIsLoading(false);
     }
   };
+
+  const addContentItem = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!newContentItemTitle.trim()) return;
+
+    setIsLoading(true);
+    try {
+      const { error } = await supabase
+        .from('content_items')
+        .insert([{ 
+          title: newContentItemTitle.trim(),
+          description: newContentItemDescription.trim() || null,
+          allow_links: newContentItemAllowLinks
+        }]);
+
+      if (error) throw error;
+      setNewContentItemTitle('');
+      setNewContentItemDescription('');
+      setNewContentItemAllowLinks(false);
+    } catch (error) {
+      console.error('Error adding content item:', error);
+    } finally {
+      setIsLoading(false);
+    }
+  };
   
   const deleteItem = async (id: string) => {
     if (window.confirm('Are you sure you want to delete this item and all its topics?')) {
@@ -176,6 +229,29 @@ export default function AdminPanel({}: AdminPanelProps) {
       } catch (error) {
         console.error('Error deleting topic:', error);
       }
+    }
+  };
+
+  const deleteContentItem = async (id: string) => {
+    if (window.confirm('Are you sure you want to delete this content item and all submissions?')) {
+      try {
+        const { error } = await supabase.from('content_items').delete().eq('id', id);
+        if (error) throw error;
+      } catch (error) {
+        console.error('Error deleting content item:', error);
+      }
+    }
+  };
+
+  const toggleContentItemStatus = async (id: string, currentStatus: boolean) => {
+    try {
+      const { error } = await supabase
+        .from('content_items')
+        .update({ is_active: !currentStatus })
+        .eq('id', id);
+      if (error) throw error;
+    } catch (error) {
+      console.error('Error toggling content item status:', error);
     }
   };
 
@@ -242,6 +318,18 @@ export default function AdminPanel({}: AdminPanelProps) {
     });
   };
 
+  const toggleContentItemExpansion = (itemId: string) => {
+    setExpandedContentItems(prev => {
+      const newSet = new Set(prev);
+      if (newSet.has(itemId)) {
+        newSet.delete(itemId);
+      } else {
+        newSet.add(itemId);
+      }
+      return newSet;
+    });
+  };
+
   const getTeamColor = (team: string) => {
     switch (team) {
       case 'Almaria': return 'bg-blue-100 text-blue-800';
@@ -253,6 +341,7 @@ export default function AdminPanel({}: AdminPanelProps) {
 
   const allTopics = items.flatMap(item => item.topics);
   const selectedTopics = allTopics.filter(topic => topic.selected_by_team);
+  const allSubmissions = contentItems.flatMap(item => item.submissions);
 
   return (
     <div className="min-h-screen bg-gray-50">
@@ -277,6 +366,7 @@ export default function AdminPanel({}: AdminPanelProps) {
             {[
               { id: 'overview', label: 'Overview', icon: BarChart3 },
               { id: 'items', label: 'Items & Topics', icon: FolderOpen },
+              { id: 'content', label: 'Content Items', icon: FileText },
               { id: 'credentials', label: 'Teams', icon: Key }
             ].map(({ id, label, icon: Icon }) => (
               <button
@@ -299,7 +389,7 @@ export default function AdminPanel({}: AdminPanelProps) {
       <div className="max-w-6xl mx-auto px-4 py-6">
         {activeTab === 'overview' && (
           <div className="space-y-6">
-            <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+            <div className="grid grid-cols-2 md:grid-cols-5 gap-4">
               <div className="bg-white rounded-lg shadow-sm border p-4 text-center">
                 <div className={`text-2xl font-bold mb-1 ${isAppLive ? 'text-green-600' : 'text-red-600'}`}>
                   {isAppLive ? 'LIVE' : 'OFF'}
@@ -317,6 +407,10 @@ export default function AdminPanel({}: AdminPanelProps) {
               <div className="bg-white rounded-lg shadow-sm border p-4 text-center">
                 <div className="text-2xl font-bold text-green-600 mb-1">{selectedTopics.length}</div>
                 <div className="text-xs text-gray-600 uppercase tracking-wide">Selected</div>
+              </div>
+              <div className="bg-white rounded-lg shadow-sm border p-4 text-center">
+                <div className="text-2xl font-bold text-purple-600 mb-1">{allSubmissions.length}</div>
+                <div className="text-xs text-gray-600 uppercase tracking-wide">Content Submitted</div>
               </div>
             </div>
             <div className="bg-white rounded-lg shadow-sm border p-4">
@@ -346,36 +440,215 @@ export default function AdminPanel({}: AdminPanelProps) {
                 <div className="flex items-center gap-2 text-sm">
                   <div className={`w-2 h-2 rounded-full ${isAppLive ? 'bg-green-500' : 'bg-red-500'}`}></div>
                   <span className="font-medium text-gray-700">
-                    App Status: {isAppLive ? 'Live - Teams can access topic selection' : 'Offline - Teams will see waiting message'}
+                    App Status: {isAppLive ? 'Live - Teams can access topic selection and content submission' : 'Offline - Teams will see waiting message'}
                   </span>
                 </div>
               </div>
             </div>
-            <div className="bg-white rounded-lg shadow-sm border">
-              <div className="p-4 border-b">
-                <h3 className="font-semibold text-gray-900">Recent Selections</h3>
-              </div>
-              <div className="p-4">
-                {selectedTopics.length === 0 ? (
-                  <p className="text-gray-500 text-center py-4">No selections yet</p>
-                ) : (
-                  <div className="space-y-3">
-                    {selectedTopics.slice(0, 5).map((topic) => {
-                      const item = items.find(item => item.id === topic.item_id);
-                      return (
-                        <div key={topic.id} className="flex items-center justify-between p-3 bg-gray-50 rounded-lg">
-                          <div className="flex-1">
-                            <div className="font-medium text-gray-900 text-sm">{topic.title}</div>
-                            <div className="text-xs text-gray-500">
-                              {item?.title} • Selected by Team {topic.selected_by_team}
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+              <div className="bg-white rounded-lg shadow-sm border">
+                <div className="p-4 border-b">
+                  <h3 className="font-semibold text-gray-900">Recent Topic Selections</h3>
+                </div>
+                <div className="p-4">
+                  {selectedTopics.length === 0 ? (
+                    <p className="text-gray-500 text-center py-4">No selections yet</p>
+                  ) : (
+                    <div className="space-y-3">
+                      {selectedTopics.slice(0, 5).map((topic) => {
+                        const item = items.find(item => item.id === topic.item_id);
+                        return (
+                          <div key={topic.id} className="flex items-center justify-between p-3 bg-gray-50 rounded-lg">
+                            <div className="flex-1">
+                              <div className="font-medium text-gray-900 text-sm">{topic.title}</div>
+                              <div className="text-xs text-gray-500">
+                                {item?.title} • Selected by Team {topic.selected_by_team}
+                              </div>
+                            </div>
+                            <div className={`px-2 py-1 rounded text-xs font-medium ${getTeamColor(topic.selected_by_team!)}`}>
+                              {topic.selected_by_team}
                             </div>
                           </div>
-                          <div className={`px-2 py-1 rounded text-xs font-medium ${getTeamColor(topic.selected_by_team!)}`}>
-                            {topic.selected_by_team}
+                        );
+                      })}
+                    </div>
+                  )}
+                </div>
+              </div>
+              <div className="bg-white rounded-lg shadow-sm border">
+                <div className="p-4 border-b">
+                  <h3 className="font-semibold text-gray-900">Recent Content Submissions</h3>
+                </div>
+                <div className="p-4">
+                  {allSubmissions.length === 0 ? (
+                    <p className="text-gray-500 text-center py-4">No submissions yet</p>
+                  ) : (
+                    <div className="space-y-3">
+                      {allSubmissions.slice(0, 5).map((submission) => {
+                        const contentItem = contentItems.find(item => item.id === submission.content_item_id);
+                        return (
+                          <div key={submission.id} className="flex items-center justify-between p-3 bg-gray-50 rounded-lg">
+                            <div className="flex-1">
+                              <div className="font-medium text-gray-900 text-sm">{submission.content_name}</div>
+                              <div className="text-xs text-gray-500">
+                                {contentItem?.title} • Team {submission.team_name}
+                              </div>
+                            </div>
+                            <div className={`px-2 py-1 rounded text-xs font-medium ${getTeamColor(submission.team_name)}`}>
+                              {submission.team_name}
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  )}
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {activeTab === 'content' && (
+          <div className="space-y-6">
+            <div className="bg-white rounded-lg shadow-sm border p-4">
+              <h3 className="font-semibold text-gray-900 mb-3">Add New Content Item</h3>
+              <form onSubmit={addContentItem} className="space-y-3">
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                  <input
+                    type="text"
+                    value={newContentItemTitle}
+                    onChange={(e) => setNewContentItemTitle(e.target.value)}
+                    placeholder="Content item title..."
+                    className="px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-transparent outline-none"
+                    disabled={isLoading}
+                  />
+                  <input
+                    type="text"
+                    value={newContentItemDescription}
+                    onChange={(e) => setNewContentItemDescription(e.target.value)}
+                    placeholder="Description (optional)..."
+                    className="px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-transparent outline-none"
+                    disabled={isLoading}
+                  />
+                </div>
+                <div className="flex items-center gap-3">
+                  <label className="flex items-center gap-2">
+                    <input
+                      type="checkbox"
+                      checked={newContentItemAllowLinks}
+                      onChange={(e) => setNewContentItemAllowLinks(e.target.checked)}
+                      className="rounded border-gray-300 text-primary-600 focus:ring-primary-500"
+                      disabled={isLoading}
+                    />
+                    <span className="text-sm text-gray-700">Allow teams to submit links</span>
+                  </label>
+                </div>
+                <button
+                  type="submit"
+                  disabled={isLoading || !newContentItemTitle.trim()}
+                  className="px-4 py-2 bg-purple-600 hover:bg-purple-700 text-white rounded-lg font-medium flex items-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed"
+                >
+                  <Plus className="h-4 w-4" />
+                  Add Content Item
+                </button>
+              </form>
+            </div>
+            <div className="bg-white rounded-lg shadow-sm border">
+              <div className="p-4 border-b">
+                <h3 className="font-semibold text-gray-900">All Content Items & Submissions</h3>
+              </div>
+              <div className="p-4">
+                {contentItems.length === 0 ? (
+                  <div className="text-center py-8">
+                    <FileText className="h-12 w-12 text-gray-400 mx-auto mb-3" />
+                    <p className="text-gray-500">No content items added yet</p>
+                  </div>
+                ) : (
+                  <div className="space-y-4">
+                    {contentItems.map((item) => (
+                      <div key={item.id} className="border border-gray-200 rounded-lg">
+                        <div className="p-4 bg-gray-50 flex items-center justify-between">
+                          <button
+                            onClick={() => toggleContentItemExpansion(item.id)}
+                            className="flex items-center gap-3 flex-1 text-left"
+                          >
+                            {expandedContentItems.has(item.id) ? (
+                              <ChevronDown className="h-5 w-5 text-gray-400" />
+                            ) : (
+                              <ChevronRight className="h-5 w-5 text-gray-400" />
+                            )}
+                            <FileText className="h-5 w-5 text-purple-600" />
+                            <div>
+                              <div className="font-medium text-gray-900">{item.title}</div>
+                              <div className="text-xs text-gray-400 mt-1">
+                                {item.submissions.length} submissions • {item.allow_links ? 'Links allowed' : 'No links'} • {item.is_active ? 'Active' : 'Inactive'}
+                              </div>
+                            </div>
+                          </button>
+                          <div className="flex items-center gap-2">
+                            <button
+                              onClick={() => toggleContentItemStatus(item.id, item.is_active)}
+                              className={`p-2 rounded transition-colors ${item.is_active ? 'text-green-600 hover:bg-green-50' : 'text-gray-600 hover:bg-gray-50'}`}
+                              title={item.is_active ? 'Deactivate' : 'Activate'}
+                            >
+                              {item.is_active ? <ToggleRight className="h-5 w-5" /> : <ToggleLeft className="h-5 w-5" />}
+                            </button>
+                            <button
+                              onClick={() => deleteContentItem(item.id)}
+                              className="p-2 text-red-600 hover:bg-red-50 rounded transition-colors"
+                              title="Delete content item"
+                            >
+                              <Trash2 className="h-4 w-4" />
+                            </button>
                           </div>
                         </div>
-                      );
-                    })}
+
+                        {expandedContentItems.has(item.id) && (
+                          <div className="p-4 border-t border-gray-200">
+                            {item.submissions.length === 0 ? (
+                              <p className="text-gray-500 text-sm">No submissions for this content item</p>
+                            ) : (
+                              <div className="space-y-3">
+                                {TEAMS.map(team => {
+                                  const teamSubmission = item.submissions.find(sub => sub.team_name === team);
+                                  return (
+                                    <div key={team} className={`p-3 border rounded-lg ${teamSubmission ? 'bg-green-50 border-green-200' : 'bg-gray-50 border-gray-200'}`}>
+                                      <div className="flex items-center justify-between mb-2">
+                                        <span className={`font-medium text-sm px-2 py-1 rounded ${getTeamColor(team)}`}>
+                                          Team {team}
+                                        </span>
+                                        {teamSubmission ? (
+                                          <span className="text-xs text-green-600 font-medium">Submitted</span>
+                                        ) : (
+                                          <span className="text-xs text-gray-500">Not submitted</span>
+                                        )}
+                                      </div>
+                                      {teamSubmission && (
+                                        <div className="space-y-1">
+                                          <p className="font-medium text-sm">{teamSubmission.content_name}</p>
+                                          {teamSubmission.content_description && (
+                                            <p className="text-xs text-gray-600">{teamSubmission.content_description}</p>
+                                          )}
+                                          {teamSubmission.content_link && (
+                                            <div className="flex items-center gap-1">
+                                              <Link className="h-3 w-3 text-blue-600" />
+                                              <a href={teamSubmission.content_link} target="_blank" rel="noopener noreferrer" className="text-xs text-blue-600 hover:underline">
+                                                {teamSubmission.content_link}
+                                              </a>
+                                            </div>
+                                          )}
+                                          <p className="text-xs text-gray-400">Submitted: {new Date(teamSubmission.submitted_at).toLocaleString('en-US', { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit', hour12: true })}</p>
+                                        </div>
+                                      )}
+                                    </div>
+                                  );
+                                })}
+                              </div>
+                            )}
+                          </div>
+                        )}
+                      </div>
+                    ))}
                   </div>
                 )}
               </div>

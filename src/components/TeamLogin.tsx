@@ -16,17 +16,6 @@ export default function TeamLogin({ team, onLoginSuccess }: TeamLoginProps) {
   const [error, setError] = useState('');
   const [isLoading, setIsLoading] = useState(false);
 
-  useEffect(() => {
-    fetchTeamCredentials();
-    fetchAppLiveStatus();
-
-    const refreshInterval = setInterval(() => {
-      fetchAppLiveStatus();
-    }, 1000);
-
-    return () => clearInterval(refreshInterval);
-  }, [team]);
-
   const fetchTeamCredentials = async () => {
     try {
       const { data, error } = await supabase
@@ -56,6 +45,16 @@ export default function TeamLogin({ team, onLoginSuccess }: TeamLoginProps) {
       console.error('Error fetching app live status:', error);
     }
   };
+
+  useEffect(() => {
+    const loadData = () => {
+        fetchTeamCredentials();
+        fetchAppLiveStatus();
+    };
+    loadData();
+    const interval = setInterval(loadData, 5000);
+    return () => clearInterval(interval);
+  }, [team]);
 
   const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();

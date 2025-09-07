@@ -1,12 +1,13 @@
 import React, { useState, useEffect } from 'react';
 import { supabase, Topic, ItemWithData, Team } from '../lib/supabase';
-import { ChevronRight, CheckCircle, Users, Trophy, Clock, Shield, FolderOpen, ChevronDown, Check, Star } from 'lucide-react';
+import { ChevronRight, CheckCircle, Users, Trophy, Clock, Shield, FolderOpen, ChevronDown, Check, Star, FileText, ArrowRight } from 'lucide-react';
 
 interface TeamSelectionProps {
   team: Team;
+  onViewChange?: (view: 'home' | 'admin' | Team | `${Team}-content`) => void;
 }
 
-export default function TeamSelection({ team }: TeamSelectionProps) {
+export default function TeamSelection({ team, onViewChange }: TeamSelectionProps) {
   const [items, setItems] = useState<ItemWithData[]>([]);
   const [isAppLive, setIsAppLive] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
@@ -63,22 +64,13 @@ export default function TeamSelection({ team }: TeamSelectionProps) {
   };
 
   useEffect(() => {
-    fetchData();
-    fetchAppLiveStatus();
-
-    const refreshInterval = setInterval(fetchData, 2000);
-    const appStatusInterval = setInterval(fetchAppLiveStatus, 5000);
-    
-    const channel = supabase
-      .channel(`realtime-updates-${team}`)
-      .on('postgres_changes', { event: '*', schema: 'public' }, fetchData)
-      .subscribe();
-
-    return () => {
-      clearInterval(refreshInterval);
-      clearInterval(appStatusInterval);
-      supabase.removeChannel(channel);
+    const loadData = () => {
+        fetchData();
+        fetchAppLiveStatus();
     };
+    loadData();
+    const interval = setInterval(loadData, 5000);
+    return () => clearInterval(interval);
   }, [team]);
 
   const selectTopic = async (topic: Topic) => {
@@ -138,9 +130,26 @@ export default function TeamSelection({ team }: TeamSelectionProps) {
               <Users className="h-8 w-8" />
               <h1 className="text-2xl font-bold">Team {team}</h1>
             </div>
-            <p className="text-gray-600">
+            <p className="text-gray-600 mb-4">
               Select one topic from each category below.
             </p>
+            
+            {/* Navigation Tabs */}
+            <div className="flex gap-2 justify-center">
+              <div className={`px-4 py-2 rounded-lg font-medium ${config.bgColor} text-white`}>
+                Topic Selection
+              </div>
+              {onViewChange && (
+                <button
+                  onClick={() => onViewChange(`${team}-content` as `${Team}-content`)}
+                  className="px-4 py-2 rounded-lg font-medium bg-gray-200 text-gray-700 hover:bg-gray-300 transition-colors flex items-center gap-2"
+                >
+                  <FileText className="h-4 w-4" />
+                  Content Submission
+                  <ArrowRight className="h-4 w-4" />
+                </button>
+              )}
+            </div>
           </div>
         </div>
       </div>

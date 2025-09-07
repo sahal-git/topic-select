@@ -8,9 +8,10 @@ import AdminPanel from './components/AdminPanel';
 import AdminLogin from './components/AdminLogin';
 import TeamSelection from './components/TeamSelection';
 import TeamLogin from './components/TeamLogin';
+import TeamContent from './components/TeamContent';
 import { Team } from './lib/supabase';
 
-type View = 'home' | 'admin' | Team;
+type View = 'home' | 'admin' | Team | `${Team}-content`;
 
 function App() {
   const [currentView, setCurrentView] = useState<View>('home');
@@ -51,9 +52,18 @@ function App() {
       case 'Tolido':
       case 'Zaragoza':
         if (authenticatedTeams.has(currentView)) {
-          return <TeamSelection team={currentView} />;
+          return <TeamSelection team={currentView} onViewChange={setCurrentView} />;
         } else {
           return <TeamLogin team={currentView} onLoginSuccess={() => handleTeamLogin(currentView)} />;
+        }
+      case 'Almaria-content':
+      case 'Tolido-content':
+      case 'Zaragoza-content':
+        const team = currentView.replace('-content', '') as Team;
+        if (authenticatedTeams.has(team)) {
+          return <TeamContent team={team} onViewChange={setCurrentView} />;
+        } else {
+          return <TeamLogin team={team} onLoginSuccess={() => handleTeamLogin(team)} />;
         }
       default:
         return <HomePage onViewChange={setCurrentView} />;
