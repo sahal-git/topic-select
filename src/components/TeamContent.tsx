@@ -7,15 +7,16 @@ type FormData = { id: string | null; name: string; description: string; link: st
 interface TeamContentProps {
   team: Team;
   onViewChange?: (view: 'home' | 'admin' | Team | `${Team}-content`) => void;
+  isAppLive: boolean;
 }
 
-export default function TeamContent({ team, onViewChange }: TeamContentProps) {
+export default function TeamContent({ team, onViewChange, isAppLive }: TeamContentProps) {
   const [contentItems, setContentItems] = useState<ContentItem[]>([]);
   const [submissions, setSubmissions] = useState<TeamContentSubmission[]>([]);
-  const [isAppLive, setIsAppLive] = useState(false);
   const [isLoading, setIsLoading] = useState<string | null>(null);
   const [showConfirmationToast, setShowConfirmationToast] = useState<{ message: string } | null>(null);
   const [formData, setFormData] = useState<{ [key: string]: FormData[] }>({});
+  const [errors, setErrors] = useState<{ [key: string]: string | null }>({});
 
   const fetchData = async () => {
     try {
@@ -67,29 +68,13 @@ export default function TeamContent({ team, onViewChange }: TeamContentProps) {
     }
   };
 
-  const fetchAppLiveStatus = async () => {
-    try {
-      const { data, error } = await supabase
-        .from('app_settings')
-        .select('value')
-        .eq('key', 'app_live')
-        .single();
-      if (error) throw error;
-      setIsAppLive(data?.value === 'true');
-    } catch (error) {
-      console.error('Error fetching app live status:', error);
-    }
-  };
-
   useEffect(() => {
     fetchData();
-    fetchAppLiveStatus();
 
     const channel = supabase
       .channel(`content-realtime-${team}`)
       .on('postgres_changes', { event: '*', schema: 'public', table: 'content_items' }, fetchData)
       .on('postgres_changes', { event: '*', schema: 'public', table: 'team_content_submissions', filter: `team_name=eq.${team}` }, fetchData)
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'app_settings', filter: 'key=eq.app_live' }, fetchAppLiveStatus)
       .subscribe();
 
     return () => {
@@ -114,36 +99,42 @@ export default function TeamContent({ team, onViewChange }: TeamContentProps) {
   const submitContent = async (contentItemId: string, submissionIndex: number) => {
     const formState = formData[contentItemId][submissionIndex];
     if (!formState.name.trim()) return;
-    
+
     const itemConfig = contentItems.find(ci => ci.id === contentItemId);
     if (itemConfig?.allow_links && !formState.link.trim()) {
-        alert('Link is required for this item.');
-        return;
+      alert('Link is required for this item.');
+      return;
     }
 
-    setIsLoading(`${contentItemId}-${submissionIndex}`);
+    const formKey = `${contentItemId}-${submissionIndex}`;
+    setErrors(prev => ({ ...prev, [formKey]: null }));
+    setIsLoading(formKey);
     try {
-      const submissionData = {
-        content_item_id: contentItemId,
-        team_name: team,
-        content_name: formState.name.trim(),
-        content_description: formState.description.trim() || null,
-        content_link: formState.link.trim() || null,
-        updated_at: new Date().toISOString()
-      };
-
       if (formState.id) {
         // Update existing submission
+        const updatePayload = {
+          content_name: formState.name.trim(),
+          content_description: formState.description.trim() || null,
+          content_link: formState.link.trim() || null,
+          updated_at: new Date().toISOString(),
+        };
         const { error } = await supabase
           .from('team_content_submissions')
-          .update(submissionData)
+          .update(updatePayload)
           .eq('id', formState.id);
         if (error) throw error;
       } else {
         // Insert new submission
+        const insertPayload = {
+          content_item_id: contentItemId,
+          team_name: team,
+          content_name: formState.name.trim(),
+          content_description: formState.description.trim() || null,
+          content_link: formState.link.trim() || null,
+        };
         const { error } = await supabase
           .from('team_content_submissions')
-          .insert([submissionData]);
+          .insert([insertPayload]);
         if (error) throw error;
       }
 
@@ -151,8 +142,12 @@ export default function TeamContent({ team, onViewChange }: TeamContentProps) {
       setTimeout(() => setShowConfirmationToast(null), 3000);
       fetchData();
 
-    } catch (error) {
+    } catch (error: any) {
       console.error('Error submitting content:', error);
+      setErrors(prev => ({
+        ...prev,
+        [formKey]: error.message || 'An unexpected error occurred. Please try again.'
+      }));
     } finally {
       setIsLoading(null);
     }
@@ -258,6 +253,7 @@ export default function TeamContent({ team, onViewChange }: TeamContentProps) {
                           <div className="bg-white divide-y divide-gray-200">
                             {forms.map((form, index) => {
                               const isSubmitted = form.id !== null;
+                              const formKey = `${item.id}-${index}`;
                               return (
                                 <div key={index} className="p-4">
                                   <div className="space-y-4">
@@ -280,7 +276,7 @@ export default function TeamContent({ team, onViewChange }: TeamContentProps) {
                                         onChange={(e) => updateFormData(item.id, index, 'name', e.target.value)}
                                         className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-transparent outline-none"
                                         placeholder="Enter content name..."
-                                        disabled={isLoading === `${item.id}-${index}`}
+                                        disabled={isLoading === formKey}
                                       />
                                     </div>
 
@@ -294,7 +290,7 @@ export default function TeamContent({ team, onViewChange }: TeamContentProps) {
                                         rows={3}
                                         className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-transparent outline-none resize-none"
                                         placeholder="Enter content description..."
-                                        disabled={isLoading === `${item.id}-${index}`}
+                                        disabled={isLoading === formKey}
                                       />
                                     </div>
 
@@ -311,13 +307,20 @@ export default function TeamContent({ team, onViewChange }: TeamContentProps) {
                                             onChange={(e) => updateFormData(item.id, index, 'link', e.target.value)}
                                             className="w-full pl-10 pr-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-transparent outline-none"
                                             placeholder="https://example.com"
-                                            disabled={isLoading === `${item.id}-${index}`}
+                                            disabled={isLoading === formKey}
                                             required={item.allow_links}
                                           />
                                         </div>
                                       </div>
                                     )}
 
+                                    {errors[formKey] && (
+                                      <div className="mt-2 bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded-lg text-sm">
+                                        <p className="font-bold">Error</p>
+                                        <p>{errors[formKey]}</p>
+                                      </div>
+                                    )}
+                                    
                                     <div className="flex items-center justify-between pt-2">
                                       {isSubmitted && (
                                         <div className="text-sm text-gray-500">
@@ -326,10 +329,10 @@ export default function TeamContent({ team, onViewChange }: TeamContentProps) {
                                       )}
                                       <button
                                         onClick={() => submitContent(item.id, index)}
-                                        disabled={isLoading === `${item.id}-${index}` || !form.name.trim() || (item.allow_links && !form.link.trim())}
+                                        disabled={isLoading === formKey || !form.name.trim() || (item.allow_links && !form.link.trim())}
                                         className={`ml-auto px-4 py-2 ${config.bgColor} hover:opacity-90 text-white rounded-lg font-medium transition-all disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2`}
                                       >
-                                        {isLoading === `${item.id}-${index}` ? (
+                                        {isLoading === formKey ? (
                                           <>
                                             <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin"></div>
                                             Saving...

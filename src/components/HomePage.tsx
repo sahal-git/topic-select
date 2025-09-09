@@ -1,38 +1,15 @@
 import React from 'react';
-import { useState, useEffect } from 'react';
 import { Users, Settings, Trophy, Shield } from 'lucide-react';
-import { TEAMS, Team, supabase } from '../lib/supabase';
+import { TEAMS, Team } from '../lib/supabase';
 
 type View = 'home' | 'admin' | Team;
 
 interface HomePageProps {
   onViewChange: (view: View) => void;
+  isAppLive: boolean;
 }
 
-export default function HomePage({ onViewChange }: HomePageProps) {
-  const [isAppLive, setIsAppLive] = useState(false);
-
-  const fetchAppLiveStatus = async () => {
-    try {
-      const { data, error } = await supabase
-        .from('app_settings')
-        .select('value')
-        .eq('key', 'app_live')
-        .single();
-
-      if (error) throw error;
-      setIsAppLive(data?.value === 'true');
-    } catch (error) {
-      console.error('Error fetching app live status:', error);
-    }
-  };
-
-  useEffect(() => {
-    fetchAppLiveStatus();
-    const intervalId = setInterval(fetchAppLiveStatus, 5000);
-    return () => clearInterval(intervalId);
-  }, []);
-
+export default function HomePage({ onViewChange, isAppLive }: HomePageProps) {
   const getTeamColor = (team: Team) => {
     switch (team) {
       case 'Almaria': return 'bg-blue-500 hover:bg-blue-600 border-blue-200';
@@ -66,7 +43,7 @@ export default function HomePage({ onViewChange }: HomePageProps) {
                 : 'bg-orange-50 border-orange-200 text-orange-700'
             }`}>
               <div className={`w-3 h-3 rounded-full ${
-                isAppLive ? 'bg-green-500 animate-pulse' : 'bg-orange-500 animate-pulse'
+                isAppLive ? 'bg-green-500 animate-pulse' : 'bg-orange-500'
               }`}></div>
               <span className="font-semibold">
                 {isAppLive ? 'Topic Selection is LIVE' : 'Waiting for Controller Permission'}

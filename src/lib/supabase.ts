@@ -83,5 +83,12 @@ export type AppSettings = {
   updated_at: string;
 };
 
+export type Schedule = {
+  id: number;
+  live_from: string | null;
+  offline_at: string | null;
+  created_at: string;
+};
+
 export const TEAMS = ['Almaria', 'Tolido', 'Zaragoza'] as const;
 export type Team = typeof TEAMS[number];

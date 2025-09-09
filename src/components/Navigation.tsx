@@ -7,9 +7,10 @@ type View = 'home' | 'admin' | Team;
 interface NavigationProps {
   currentView: View;
   onViewChange: (view: View) => void;
+  isAppLive: boolean;
 }
 
-export default function Navigation({ currentView, onViewChange }: NavigationProps) {
+export default function Navigation({ currentView, onViewChange, isAppLive }: NavigationProps) {
   return (
     <nav className="bg-white border-b border-gray-200 shadow-sm sticky top-0 z-50">
       <div className="max-w-6xl mx-auto px-4">
@@ -26,9 +27,11 @@ export default function Navigation({ currentView, onViewChange }: NavigationProp
           
           <div className="flex items-center gap-2">
             {/* Live indicator */}
-            <div className="flex items-center gap-1 text-xs text-gray-500 bg-gray-50 px-2 py-1 rounded-full">
-              <div className="w-2 h-2 bg-green-500 rounded-full animate-pulse"></div>
-              <span>Live</span>
+            <div className={`flex items-center gap-1 text-xs px-2 py-1 rounded-full ${
+              isAppLive ? 'bg-green-50 text-green-700' : 'bg-red-50 text-red-700'
+            }`}>
+              <div className={`w-2 h-2 rounded-full ${isAppLive ? 'bg-green-500 animate-pulse' : 'bg-red-500'}`}></div>
+              <span>{isAppLive ? 'Live' : 'Offline'}</span>
             </div>
             
             {/* Home Button */}

@@ -5,11 +5,11 @@ import { ChevronRight, CheckCircle, Users, Trophy, Shield, FolderOpen, ChevronDo
 interface TeamSelectionProps {
   team: Team;
   onViewChange?: (view: 'home' | 'admin' | Team | `${Team}-content`) => void;
+  isAppLive: boolean;
 }
 
-export default function TeamSelection({ team, onViewChange }: TeamSelectionProps) {
+export default function TeamSelection({ team, onViewChange, isAppLive }: TeamSelectionProps) {
   const [items, setItems] = useState<ItemWithData[]>([]);
-  const [isAppLive, setIsAppLive] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
   const [showConfirmationToast, setShowConfirmationToast] = useState<{ message: string } | null>(null);
   const [expandedItems, setExpandedItems] = useState<Set<string>>(new Set());
@@ -49,27 +49,9 @@ export default function TeamSelection({ team, onViewChange }: TeamSelectionProps
     }
   };
 
-  const fetchAppLiveStatus = async () => {
-    try {
-      const { data, error } = await supabase
-        .from('app_settings')
-        .select('value')
-        .eq('key', 'app_live')
-        .single();
-      if (error) throw error;
-      setIsAppLive(data?.value === 'true');
-    } catch (error) {
-      console.error('Error fetching app live status:', error);
-    }
-  };
-
   useEffect(() => {
-    const loadData = () => {
-        fetchData();
-        fetchAppLiveStatus();
-    };
-    loadData();
-    const interval = setInterval(loadData, 5000);
+    fetchData();
+    const interval = setInterval(fetchData, 5000);
     return () => clearInterval(interval);
   }, [team]);
 

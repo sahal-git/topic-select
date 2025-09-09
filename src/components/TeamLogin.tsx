@@ -1,59 +1,37 @@
 import React, { useState, useEffect } from 'react';
-import { supabase, TeamCredentials, Team, AppSettings } from '../lib/supabase';
+import { supabase, TeamCredentials, Team } from '../lib/supabase';
 import { Users, Lock, Eye, EyeOff, Trophy, Shield } from 'lucide-react';
 
 interface TeamLoginProps {
   team: Team;
   onLoginSuccess: () => void;
+  isAppLive: boolean;
 }
 
-export default function TeamLogin({ team, onLoginSuccess }: TeamLoginProps) {
+export default function TeamLogin({ team, onLoginSuccess, isAppLive }: TeamLoginProps) {
   const [credentials, setCredentials] = useState<TeamCredentials | null>(null);
-  const [isAppLive, setIsAppLive] = useState(false);
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
   const [error, setError] = useState('');
   const [isLoading, setIsLoading] = useState(false);
 
-  const fetchTeamCredentials = async () => {
-    try {
-      const { data, error } = await supabase
-        .from('team_credentials')
-        .select('*')
-        .eq('team_name', team)
-        .single();
-
-      if (error) throw error;
-      setCredentials(data);
-    } catch (error) {
-      console.error('Error fetching team credentials:', error);
-    }
-  };
-
-  const fetchAppLiveStatus = async () => {
-    try {
-      const { data, error } = await supabase
-        .from('app_settings')
-        .select('value')
-        .eq('key', 'app_live')
-        .single();
-
-      if (error) throw error;
-      setIsAppLive(data?.value === 'true');
-    } catch (error) {
-      console.error('Error fetching app live status:', error);
-    }
-  };
-
   useEffect(() => {
-    const loadData = () => {
-        fetchTeamCredentials();
-        fetchAppLiveStatus();
+    const fetchTeamCredentials = async () => {
+      try {
+        const { data, error } = await supabase
+          .from('team_credentials')
+          .select('*')
+          .eq('team_name', team)
+          .single();
+
+        if (error) throw error;
+        setCredentials(data);
+      } catch (error) {
+        console.error('Error fetching team credentials:', error);
+      }
     };
-    loadData();
-    const interval = setInterval(loadData, 5000);
-    return () => clearInterval(interval);
+    fetchTeamCredentials();
   }, [team]);
 
   const handleLogin = async (e: React.FormEvent) => {
@@ -138,7 +116,7 @@ export default function TeamLogin({ team, onLoginSuccess }: TeamLoginProps) {
                 The topic selection system is currently offline. Please wait for the event controller to make the system live.
               </p>
               <div className="inline-flex items-center gap-2 text-sm text-orange-600 bg-orange-50 px-4 py-2 rounded-full border border-orange-200">
-                <div className="w-2 h-2 bg-orange-500 rounded-full animate-pulse"></div>
+                <div className="w-2 h-2 bg-orange-500 rounded-full"></div>
                 <span>System Offline</span>
               </div>
             </div>
